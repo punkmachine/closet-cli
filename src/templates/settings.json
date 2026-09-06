@@ -1,0 +1,71 @@
+{
+  "includeCoAuthoredBy": false,
+  "permissions": {
+    "allow": [
+      "Bash(pnpm run:*)",
+      "Bash(pnpm dev:*)",
+      "Bash(pnpm list:*)",
+      "Bash(pnpm add:*)",
+      "Bash(pnpm build:*)",
+      "Bash(pnpm preview:*)",
+      "Bash(pnpm install *)",
+      "Bash(pnpm test:*)",
+      "Bash(pnpm lint:*)",
+      "Bash(pnpm typecheck)",
+      "Bash(* --version)",
+      "Bash(* --help *)",
+      "Bash(git status)",
+      "Bash(git worktree:*)",
+      "WebFetch(domain:freedom-miniapp.idoctor.kz)",
+      "WebFetch(domain:eruda.liriliri.io)",
+      "WebFetch(domain:localhost)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:ui.shadcn.com)",
+      "WebFetch(domain:npmjs.com)",
+      "WebFetch(domain:shadcn-chatbot-kit.vercel.app)",
+      "WebFetch(domain:typeorm.io)",
+      "WebFetch(domain:dev.to)",
+      "WebFetch(domain:claude.ai)",
+      "WebFetch(domain:coss.com)",
+      "WebFetch(domain:medium.com)",
+      "WebFetch(domain:habr.com)",
+      "WebFetch(domain:docs.nestjs.com)",
+      "WebFetch(domain:tailwindcss.com)",
+      "WebFetch(domain:react.dev)",
+      "WebFetch(domain:tanstack.com)",
+      "WebFetch(domain:nextjs.org)",
+      "WebFetch(domain:reactrouter.com)",
+      "WebFetch(domain:www.chartjs.org)",
+      "WebFetch(domain:vuejs.org)",
+      "WebFetch(domain:vite.dev)",
+      "WebFetch(domain:astro.build)",
+      "WebFetch(domain:nodejs.org)",
+      "WebFetch(domain:fastify.dev)",
+      "WebFetch(domain:docs.claude.com)",
+      "mcp__ide__*",
+      "mcp__context7__*",
+      "Bash(xargs grep:*)",
+      "Bash(find:*)",
+      "Bash(grep:*)",
+      "Bash(cd:*)"
+    ],
+    "deny": [
+      "Bash(git push*)",
+      "Bash(git reset*)"
+    ],
+    "ask": [
+      "Bash(rm *)",
+      "Bash(rm -rf *)"
+    ],
+    "defaultMode": "acceptEdits"
+  },
+  "model": "sonnet",
+  "language": "Russian",
+  "effortLevel": "high",
+  "theme": "dark",
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  }
+}
