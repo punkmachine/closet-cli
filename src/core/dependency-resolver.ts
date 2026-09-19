@@ -1,59 +1,64 @@
-import type { ItemMetadata, RegistryClient } from "../registry/types.js";
+import type { PluginBundle, RegistryClient } from "../registry/types.js";
 
 /**
- * Ошибка резолва графа зависимостей items: item не найден в registry либо
- * обнаружена циклическая зависимость.
+ * Ошибка резолва графа зависимостей плагинов: плагин не найден в registry
+ * либо обнаружена циклическая зависимость.
  */
 export class DependencyResolutionError extends Error {}
 
 /**
- * Рекурсивно резолвит зависимости для набора корневых items через
- * `registry.getItem(name)` и возвращает их в топологически отсортированном
- * порядке (зависимости раньше зависящих от них items).
+ * Рекурсивно резолвит транзитивные зависимости для набора корневых slug'ов
+ * через `registry.getPluginBundle(slug, "latest")` и возвращает их bundle'ы
+ * в топологически отсортированном порядке (зависимости раньше зависящих от
+ * них плагинов).
  *
- * - Дедуплицирует items по имени.
- * - Бросает `DependencyResolutionError`, если item не найден в registry либо
- *   обнаружен цикл в графе зависимостей.
+ * Зависимости в bundle-ответе сервера — только slug'и, без версии (сервер
+ * их не пиннит, plan.md раздел 0/4 п.9), поэтому резолвятся всегда на
+ * "latest" версию, независимо от версии плагина, который их запросил.
+ *
+ * - Дедуплицирует плагины по slug.
+ * - Бросает `DependencyResolutionError`, если плагин не найден в registry
+ *   либо обнаружен цикл в графе зависимостей.
  */
-export async function resolveDependencies(
+export async function resolvePluginClosure(
   registry: RegistryClient,
-  rootNames: string[],
-): Promise<ItemMetadata[]> {
-  const resolved = new Map<string, ItemMetadata>();
+  rootSlugs: string[],
+): Promise<PluginBundle[]> {
+  const resolved = new Map<string, PluginBundle>();
   const visiting = new Set<string>();
   const stack: string[] = [];
 
-  async function visit(name: string): Promise<void> {
-    if (resolved.has(name)) return;
+  async function visit(slug: string): Promise<void> {
+    if (resolved.has(slug)) return;
 
-    if (visiting.has(name)) {
-      const cycleStart = stack.indexOf(name);
-      const cyclePath = [...stack.slice(cycleStart), name];
+    if (visiting.has(slug)) {
+      const cycleStart = stack.indexOf(slug);
+      const cyclePath = [...stack.slice(cycleStart), slug];
       throw new DependencyResolutionError(
         `Обнаружена циклическая зависимость: ${cyclePath.join(" -> ")}`,
       );
     }
 
-    const item = await registry.getItem(name);
-    if (!item) {
-      throw new DependencyResolutionError(`Item "${name}" не найден в registry`);
+    const bundle = await registry.getPluginBundle(slug, "latest");
+    if (!bundle) {
+      throw new DependencyResolutionError(`Плагин "${slug}" не найден в registry`);
     }
 
-    visiting.add(name);
-    stack.push(name);
+    visiting.add(slug);
+    stack.push(slug);
 
-    for (const dependencyName of item.dependencies) {
-      await visit(dependencyName);
+    for (const dependencySlug of bundle.dependencies) {
+      await visit(dependencySlug);
     }
 
     stack.pop();
-    visiting.delete(name);
+    visiting.delete(slug);
 
-    resolved.set(name, item);
+    resolved.set(slug, bundle);
   }
 
-  for (const name of rootNames) {
-    await visit(name);
+  for (const slug of rootSlugs) {
+    await visit(slug);
   }
 
   return [...resolved.values()];

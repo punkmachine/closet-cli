@@ -6,71 +6,112 @@ import semver from "semver";
 import { PROJECT_CONFIG_FILE_NAME } from "./paths.js";
 
 /**
- * Типы items, которые может хранить registry и устанавливать punk-ai.
+ * Компоненты плагина, которые может хранить registry и устанавливать closet-cli.
  *
  * ВАЖНО: этот список продублирован здесь намеренно, а не импортирован из
  * `src/registry/*`, чтобы `config/*` оставался полностью самодостаточным
- * модулем без зависимости от registry.
+ * модулем без зависимости от registry. Значения синхронизированы с
+ * `PLUGIN_COMPONENTS` на стороне closet-registry.
  */
-export const ITEM_TYPES = ["rules", "skills", "commands", "agents", "hooks", "mcp", "statusline"] as const;
+export const PLUGIN_COMPONENTS = [
+  "mcp",
+  "rules",
+  "hooks",
+  "agents",
+  "commands",
+  "skills",
+  "scripts",
+] as const;
 
-export type ItemType = (typeof ITEM_TYPES)[number];
+export type PluginComponent = (typeof PLUGIN_COMPONENTS)[number];
 
 /**
- * Схема одного файла в составе установленного item'а. `rootPath`/`merge`
- * зеркалят одноимённые поля `ItemFile` из `src/registry/types.ts` — они
- * нужны здесь, чтобы `remove` мог заново вычислить путь назначения файла
- * и определить, что merge-файлы (например, `.claude/settings.json`) нельзя
- * удалять целиком, не имея доступа к registry.
+ * Поддерживаемые ИИ-агенты. Список хардкодится в коде CLI, а не тянется с сервера.
  */
-export const installedFileSchema = z.object({
+export const AI_NAMES = ["codex", "claude-code"] as const;
+
+export type AiName = (typeof AI_NAMES)[number];
+
+/**
+ * Схема одного файла в составе установленного плагина.
+ *
+ * `ai: null` — файл общий для всех ИИ, иначе — ai-специфичный вариант.
+ * Обычные (немерджащиеся) файлы отслеживаются по `sha256`; merge-файлы
+ * (`.mcp.json`, `.claude/settings.json`, `.codex/config.toml`) — по
+ * `mergeKeyPath`/`mergeValue`, без хеша.
+ */
+export const installedPluginFileSchema = z.object({
+  component: z.enum(PLUGIN_COMPONENTS),
+  ai: z.enum(AI_NAMES).nullable(),
   path: z.string(),
-  rootPath: z.boolean().optional(),
+  sha256: z.string().optional(),
   merge: z.boolean().optional(),
+  mergeKeyPath: z.string().optional(),
+  mergeValue: z.unknown().optional(),
 });
 
-export type InstalledFile = z.infer<typeof installedFileSchema>;
+export type InstalledPluginFile = z.infer<typeof installedPluginFileSchema>;
 
 /**
- * Схема одной установленной записи в `.punk-ai.json`.
+ * Схема одного установленного плагина в `closet-cli.json`.
  */
-export const installedItemSchema = z.object({
-  type: z.enum(ITEM_TYPES),
+export const installedPluginSchema = z.object({
   version: z.string().refine((value) => semver.valid(value) !== null, {
     message: "version должен быть валидной semver-версией (например, \"1.2.3\")",
   }),
-  files: z.array(installedFileSchema),
+  autoupdate: z.boolean(),
+  files: z.array(installedPluginFileSchema),
 });
 
-export type InstalledItem = z.infer<typeof installedItemSchema>;
+export type InstalledPlugin = z.infer<typeof installedPluginSchema>;
 
 /**
- * Схема всего файла `.punk-ai.json`.
+ * Схема секции `registry`: адрес self-hosted реестра и токен авторизации.
+ * Токен опционален в схеме, но сервер сейчас требует Bearer-токен на всех
+ * `/v1/*`, так что на практике поле обязательно для непустого реестра.
+ */
+export const registryConfigSchema = z.object({
+  host: z.string().url(),
+  token: z.string().optional(),
+});
+
+export type RegistryConfig = z.infer<typeof registryConfigSchema>;
+
+/**
+ * Схема секции `ai`: какие ИИ-агенты включены в проекте. Ключи ограничены
+ * `AI_NAMES` — только `codex`/`claude-code`.
+ */
+export const aiConfigSchema = z.record(z.enum(AI_NAMES), z.boolean());
+
+export type AiConfig = z.infer<typeof aiConfigSchema>;
+
+/**
+ * Схема всего файла `closet-cli.json`.
  */
 export const projectConfigSchema = z.object({
-  registryUrl: z.string().url(),
-  installed: z.record(z.string(), installedItemSchema),
-  createdAt: z.string().datetime(),
+  registry: registryConfigSchema,
+  ai: aiConfigSchema,
+  plugins: z.record(z.string(), installedPluginSchema),
 });
 
 export type ProjectConfig = z.infer<typeof projectConfigSchema>;
 
 /**
- * Путь до `.punk-ai.json` в корне проекта пользователя.
+ * Путь до `closet-cli.json` в корне проекта пользователя.
  */
 export function projectConfigPath(projectRoot: string): string {
   return path.join(projectRoot, PROJECT_CONFIG_FILE_NAME);
 }
 
 /**
- * Синхронно проверяет, существует ли `.punk-ai.json` в корне проекта.
+ * Синхронно проверяет, существует ли `closet-cli.json` в корне проекта.
  */
 export function projectConfigExists(projectRoot: string): boolean {
   return fs.existsSync(projectConfigPath(projectRoot));
 }
 
 /**
- * Синхронно читает и валидирует `.punk-ai.json`.
+ * Синхронно читает и валидирует `closet-cli.json`.
  *
  * Бросает понятную ошибку, если файл отсутствует, содержит невалидный JSON
  * или не проходит zod-валидацию.
@@ -80,7 +121,7 @@ export function readProjectConfig(projectRoot: string): ProjectConfig {
 
   if (!fs.existsSync(configPath)) {
     throw new Error(
-      `Файл ${PROJECT_CONFIG_FILE_NAME} не найден в ${projectRoot}. Запустите \`punk-ai init\`.`,
+      `Файл ${PROJECT_CONFIG_FILE_NAME} не найден в ${projectRoot}. Запустите \`closet-cli init\`.`,
     );
   }
 
@@ -103,7 +144,7 @@ export function readProjectConfig(projectRoot: string): ProjectConfig {
 }
 
 /**
- * Синхронно сериализует и записывает конфиг в `.punk-ai.json`.
+ * Синхронно сериализует и записывает конфиг в `closet-cli.json`.
  */
 export function writeProjectConfig(projectRoot: string, config: ProjectConfig): void {
   const configPath = projectConfigPath(projectRoot);
@@ -111,13 +152,13 @@ export function writeProjectConfig(projectRoot: string, config: ProjectConfig): 
 }
 
 /**
- * Создаёт начальный конфиг для команды `init`: пустой `installed` и
- * `createdAt`, выставленный в текущий момент времени.
+ * Создаёт начальный конфиг для команды `init`: без установленных плагинов,
+ * с указанным адресом реестра и набором включённых ИИ.
  */
-export function createInitialProjectConfig(registryUrl: string): ProjectConfig {
+export function createInitialProjectConfig(registry: RegistryConfig, ai: AiConfig): ProjectConfig {
   return {
-    registryUrl,
-    installed: {},
-    createdAt: new Date().toISOString(),
+    registry,
+    ai,
+    plugins: {},
   };
 }

@@ -1,72 +1,100 @@
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
+/**
+ * JSON-обёртка над общим движком именованных слотов (`merge-slots.ts`) для
+ * merge-файлов вида `.mcp.json`/`.claude/settings.json` (plan.md, 2.7).
+ *
+ * Модель B+C: слот идентифицируется `mergeKeyPath`, а не диффом всего файла.
+ * Прежняя версия этого модуля (whole-fragment deep-merge поверх произвольного
+ * JSON-фрагмента) удалена — она не совпадала с реальной schema `closet-cli.json`
+ * (`InstalledPluginFile.mergeValue`), где для каждого merge-файла уже хранится
+ * ровно один именованный слот, а не произвольный кусок дерева.
+ */
 
-function parseJsonObject(raw: string): Record<string, unknown> | undefined {
+import { installSlot, isPlainObject, isSlotOccupied, isSlotUnchanged, removeSlot, updateSlot } from "./merge-slots.js";
+
+function parseJsonRoot(currentRaw: string | undefined): Record<string, unknown> {
+  if (currentRaw === undefined) return {};
+
   let parsed: unknown;
   try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return undefined;
+    parsed = JSON.parse(currentRaw);
+  } catch (error) {
+    const details = error instanceof Error ? error.message : String(error);
+    throw new Error(`существующий файл повреждён: невалидный JSON (${details})`);
   }
 
-  return isPlainObject(parsed) ? parsed : undefined;
+  if (!isPlainObject(parsed)) {
+    throw new Error("существующий файл повреждён: ожидался JSON-объект верхнего уровня");
+  }
+  return parsed;
 }
 
-function deepMergeObjects(
-  current: Record<string, unknown>,
-  fragment: Record<string, unknown>,
-): Record<string, unknown> {
-  const result: Record<string, unknown> = { ...current };
-
-  for (const [key, fragmentValue] of Object.entries(fragment)) {
-    const currentValue = result[key];
-    result[key] =
-      isPlainObject(currentValue) && isPlainObject(fragmentValue)
-        ? deepMergeObjects(currentValue, fragmentValue)
-        : fragmentValue;
-  }
-
-  return result;
+function stringifyJsonRoot(root: Record<string, unknown>): string {
+  return `${JSON.stringify(root, null, 2)}\n`;
 }
 
-export function isJsonMergeDestructive(currentRaw: string, fragmentRaw: string): boolean {
-  const current = parseJsonObject(currentRaw);
-  const fragment = parseJsonObject(fragmentRaw);
-
-  if (!current || !fragment) return true;
-
-  return isDestructive(current, fragment);
+/**
+ * Устанавливает значение именованного слота в JSON-файл при первой установке
+ * плагина, не трогая остальные ключи. `currentRaw === undefined` — файла ещё
+ * нет, он будет создан с нуля.
+ */
+export function installJsonSlot(currentRaw: string | undefined, mergeKeyPath: string, value: unknown): string {
+  const root = parseJsonRoot(currentRaw);
+  installSlot(root, mergeKeyPath, value);
+  return stringifyJsonRoot(root);
 }
 
-function isDestructive(current: Record<string, unknown>, fragment: Record<string, unknown>): boolean {
-  return Object.entries(fragment).some(([key, fragmentValue]) => {
-    if (!(key in current)) return false;
-
-    const currentValue = current[key];
-    if (isPlainObject(currentValue) && isPlainObject(fragmentValue)) {
-      return isDestructive(currentValue, fragmentValue);
-    }
-
-    return JSON.stringify(currentValue) !== JSON.stringify(fragmentValue);
-  });
+/**
+ * Проверяет, что слот в файле на диске всё ещё равен значению, сохранённому
+ * в `closet-cli.json` (`files[].mergeValue`) при установке — то есть
+ * пользователь его не менял вручную. Отсутствующий файл — не "не изменён",
+ * а "недоступен для проверки" (`false`).
+ */
+export function isJsonSlotUnchanged(
+  currentRaw: string | undefined,
+  mergeKeyPath: string,
+  expectedValue: unknown,
+): boolean {
+  if (currentRaw === undefined) return false;
+  return isSlotUnchanged(parseJsonRoot(currentRaw), mergeKeyPath, expectedValue);
 }
 
-export function mergeJsonContent(currentRaw: string | undefined, fragmentRaw: string): string {
-  const fragment = parseJsonObject(fragmentRaw);
-  if (!fragment) {
-    throw new Error("merge-файл должен содержать JSON-объект верхнего уровня");
-  }
+/**
+ * Проверяет, занят ли слот каким-либо значением — используется при первой
+ * установке плагина, чтобы отличить "слот свободен" от "слот занят чужим
+ * значением" (реальный конфликт, см. `core/conflict.ts`).
+ */
+export function isJsonSlotOccupied(currentRaw: string | undefined, mergeKeyPath: string): boolean {
+  if (currentRaw === undefined) return false;
+  return isSlotOccupied(parseJsonRoot(currentRaw), mergeKeyPath);
+}
 
-  if (currentRaw === undefined) {
-    return `${JSON.stringify(fragment, null, 2)}\n`;
-  }
+/**
+ * Обновляет слот на новое значение. Вызывающий код обязан заранее убедиться
+ * через `isJsonSlotUnchanged`, что слот не менялся пользователем (либо
+ * действовать в режиме `--force`).
+ */
+export function updateJsonSlot(
+  currentRaw: string,
+  mergeKeyPath: string,
+  oldValue: unknown,
+  newValue: unknown,
+): string {
+  const root = parseJsonRoot(currentRaw);
+  updateSlot(root, mergeKeyPath, oldValue, newValue);
+  return stringifyJsonRoot(root);
+}
 
-  const current = parseJsonObject(currentRaw);
-  if (!current) {
-    throw new Error("существующий файл повреждён: невалидный JSON-объект, мёрж невозможен");
-  }
-
-  const merged = deepMergeObjects(current, fragment);
-  return `${JSON.stringify(merged, null, 2)}\n`;
+/**
+ * Удаляет слот, если он ещё существует (объектный слот — безусловно по
+ * пути; массивный — только совпадающий по значению элемент). `removed:
+ * false`, если удалять было нечего (пользователь уже удалил слот вручную).
+ */
+export function removeJsonSlot(
+  currentRaw: string,
+  mergeKeyPath: string,
+  expectedValue: unknown,
+): { content: string; removed: boolean } {
+  const root = parseJsonRoot(currentRaw);
+  const removed = removeSlot(root, mergeKeyPath, expectedValue);
+  return { content: stringifyJsonRoot(root), removed };
 }

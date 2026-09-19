@@ -1,15 +1,36 @@
 import fs from "node:fs";
 import * as p from "@clack/prompts";
 
-import { isJsonMergeDestructive } from "./json-merge.js";
+import { isJsonSlotOccupied, isJsonSlotUnchanged } from "./json-merge.js";
+import { isTomlSlotOccupied, isTomlSlotUnchanged } from "./toml-merge.js";
+import type { AiName, PluginComponent } from "../registry/types.js";
 
-export interface PlannedFile {
-  itemName: string;
-  type: string;
-  file: { path: string; content: string };
+/** Обычный (немерджащийся) файл — пишется как есть в `destPath`. */
+export interface DirPlannedFile {
+  kind: "dir";
+  pluginSlug: string;
+  component: PluginComponent;
+  /** Исходный тег `ai` файла в bundle (`null` = общий для всех ИИ). */
+  ai: AiName | null;
+  /** Конкретный ИИ, под который резолвился этот destPath (см. `core/installer.ts`, planBundleFiles). */
+  targetAi: AiName;
   destPath: string;
-  merge?: boolean;
+  content: string | Buffer;
 }
+
+/** Merge-файл (JSON или TOML) — владение ограничено именованным слотом `mergeKeyPath`, см. `core/merge-slots.ts`. */
+export interface MergePlannedFile {
+  kind: "merge-json" | "merge-toml";
+  pluginSlug: string;
+  component: PluginComponent;
+  ai: AiName | null;
+  targetAi: AiName;
+  destPath: string;
+  mergeKeyPath: string;
+  mergeValue: unknown;
+}
+
+export type PlannedFile = DirPlannedFile | MergePlannedFile;
 
 export type ConflictMode = "interactive" | "force" | "skip";
 
@@ -24,15 +45,30 @@ export interface ConflictResolutionResult {
  */
 export class ConflictResolutionError extends Error {}
 
+/**
+ * "Конфликт" при первой установке — это ТОЛЬКО столкновение с чужим уже
+ * существующим содержимым:
+ * - `dir` — файл на диске существует и отличается от нового содержимого;
+ * - merge-слот — слот уже занят (см. `isSlotOccupied`) значением, которое
+ *   не совпадает с тем, что мы собираемся туда положить. Массивный слот
+ *   никогда не считается занятым (модель B+C: элементы массива законно
+ *   принадлежат разным плагинам) — идемпотентность конкретного элемента
+ *   проверяется отдельно, на записи (`core/installer.ts`), а не здесь.
+ */
 function isConflicting(file: PlannedFile): boolean {
-  if (!fs.existsSync(file.destPath)) return false;
-  const current = fs.readFileSync(file.destPath, "utf-8");
-
-  if (file.merge) {
-    return isJsonMergeDestructive(current, file.file.content);
+  if (file.kind === "dir") {
+    if (!fs.existsSync(file.destPath)) return false;
+    const current = fs.readFileSync(file.destPath);
+    const next = typeof file.content === "string" ? Buffer.from(file.content, "utf-8") : file.content;
+    return !current.equals(next);
   }
 
-  return current !== file.file.content;
+  const currentRaw = fs.existsSync(file.destPath) ? fs.readFileSync(file.destPath, "utf-8") : undefined;
+  const isOccupied = file.kind === "merge-json" ? isJsonSlotOccupied : isTomlSlotOccupied;
+  const isUnchanged = file.kind === "merge-json" ? isJsonSlotUnchanged : isTomlSlotUnchanged;
+
+  if (!isOccupied(currentRaw, file.mergeKeyPath)) return false;
+  return !isUnchanged(currentRaw, file.mergeKeyPath, file.mergeValue);
 }
 
 /**
@@ -40,8 +76,9 @@ function isConflicting(file: PlannedFile): boolean {
  * (`toWrite`), и те, что нужно пропустить (`toSkip`), в зависимости от
  * наличия конфликтов на диске и выбранного режима.
  *
- * Неконфликтные файлы (отсутствуют либо содержимое идентично) всегда
- * попадают в `toWrite` независимо от режима.
+ * Неконфликтные файлы (отсутствуют, содержимое идентично, либо слот
+ * свободен/уже равен нашему значению) всегда попадают в `toWrite`
+ * независимо от режима.
  */
 export async function resolveConflicts(
   files: PlannedFile[],

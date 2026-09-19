@@ -1,45 +1,23 @@
-import fs from "node:fs";
-import path from "node:path";
 import type { Command } from "commander";
 import pc from "picocolors";
 
-import { itemFileDestPath } from "../config/paths.js";
 import { projectConfigExists, readProjectConfig, writeProjectConfig } from "../config/project-config.js";
+import { collectUsedDestPaths, removeTrackedFile } from "../core/removal.js";
 
 interface RemoveCommandOptions {
   all?: boolean;
 }
 
-/**
- * Пытается удалить файл с диска и, если после этого родительская директория
- * стала пустой, удалить и её. Не критично, если не получится (например,
- * недостаточно прав) — тогда просто молча пропускаем уборку директории.
- */
-function removeFileAndCleanupDir(destPath: string): void {
-  if (fs.existsSync(destPath)) {
-    fs.rmSync(destPath);
-  }
-
-  try {
-    const dir = path.dirname(destPath);
-    if (fs.readdirSync(dir).length === 0) {
-      fs.rmdirSync(dir);
-    }
-  } catch {
-    // Уборка директории не критична — молча игнорируем.
-  }
-}
-
 export function registerRemoveCommand(program: Command): void {
   program
     .command("remove [name]")
-    .description("Remove an installed item, or all installed items with --all")
-    .option("--all", "Remove all installed items")
+    .description("Remove an installed plugin, or all installed plugins with --all")
+    .option("--all", "Remove all installed plugins")
     .action(async (name: string | undefined, opts: RemoveCommandOptions) => {
       const projectRoot = process.cwd();
 
       if (!projectConfigExists(projectRoot)) {
-        console.error(pc.red("Проект не инициализирован. Запустите `punk-ai init`."));
+        console.error(pc.red("Проект не инициализирован. Запустите `closet-cli init`."));
         process.exit(1);
       }
 
@@ -47,46 +25,36 @@ export function registerRemoveCommand(program: Command): void {
       try {
         config = readProjectConfig(projectRoot);
       } catch (error) {
-        const details = error instanceof Error ? error.message : String(error);
-        console.error(pc.red(details));
+        console.error(pc.red(error instanceof Error ? error.message : String(error)));
         process.exit(1);
       }
 
       if (name && opts.all) {
-        console.error(pc.red("Нельзя одновременно указать имя item'а и --all."));
+        console.error(pc.red("Нельзя одновременно указать имя плагина и --all."));
         process.exit(1);
       }
 
       if (!name && !opts.all) {
-        console.error(pc.red("Укажите имя item'а для удаления или используйте --all."));
+        console.error(pc.red("Укажите имя плагина для удаления или используйте --all."));
         process.exit(1);
       }
 
-      let namesToRemove: string[];
+      let slugsToRemove: string[];
       if (opts.all) {
-        namesToRemove = Object.keys(config.installed);
+        slugsToRemove = Object.keys(config.plugins);
       } else {
-        const targetName = name as string;
-        if (!(targetName in config.installed)) {
-          console.error(pc.red(`Item "${targetName}" не установлен.`));
+        const targetSlug = name as string;
+        if (!(targetSlug in config.plugins)) {
+          console.error(pc.red(`Плагин "${targetSlug}" не установлен.`));
           process.exit(1);
         }
-        namesToRemove = [targetName];
+        slugsToRemove = [targetSlug];
       }
 
-      const remainingEntries = Object.entries(config.installed).filter(
-        ([n]) => !namesToRemove.includes(n),
-      );
-
-      const usedDestPaths = new Set<string>();
-      for (const [, item] of remainingEntries) {
-        for (const f of item.files) {
-          usedDestPaths.add(itemFileDestPath(projectRoot, item.type, f.path, { rootPath: f.rootPath }));
-        }
-      }
+      const stillUsed = collectUsedDestPaths(projectRoot, config.plugins, new Set(slugsToRemove));
 
       interface RemovalSummary {
-        name: string;
+        slug: string;
         version: string;
         removedCount: number;
         keptCount: number;
@@ -95,59 +63,39 @@ export function registerRemoveCommand(program: Command): void {
 
       const summaries: RemovalSummary[] = [];
 
-      const entriesToRemove = Object.entries(config.installed).filter(([n]) =>
-        namesToRemove.includes(n),
-      );
-
-      for (const [nameToRemove, item] of entriesToRemove) {
+      for (const slug of slugsToRemove) {
+        // slug гарантированно есть в config.plugins (построено из его же ключей выше).
+        const plugin = config.plugins[slug]!;
         let removedCount = 0;
         let keptCount = 0;
         let mergedCount = 0;
 
-        for (const f of item.files) {
-          // merge-файлы (например .claude/settings.json) содержат ключи от
-          // нескольких источников — punk-ai не удаляет их целиком, только
-          // прекращает отслеживать.
-          if (f.merge) {
-            mergedCount += 1;
-            continue;
-          }
-
-          const destPath = itemFileDestPath(projectRoot, item.type, f.path, {
-            rootPath: f.rootPath,
-          });
-
-          if (usedDestPaths.has(destPath)) {
-            keptCount += 1;
-            continue;
-          }
-
-          removeFileAndCleanupDir(destPath);
-          removedCount += 1;
+        for (const file of plugin.files) {
+          const status = removeTrackedFile(projectRoot, file, stillUsed);
+          if (status === "removed") removedCount += 1;
+          else if (status === "kept-shared") keptCount += 1;
+          else if (status === "merge-removed") mergedCount += 1;
+          // "already-gone" — файл и так отсутствовал на диске, отдельно не считаем.
         }
 
-        summaries.push({ name: nameToRemove, version: item.version, removedCount, keptCount, mergedCount });
+        summaries.push({ slug, version: plugin.version, removedCount, keptCount, mergedCount });
       }
 
-      for (const nameToRemove of namesToRemove) {
-        delete config.installed[nameToRemove];
+      for (const slug of slugsToRemove) {
+        delete config.plugins[slug];
       }
 
       writeProjectConfig(projectRoot, config);
 
       for (const summary of summaries) {
-        console.log(pc.green(`✓ Удалён ${summary.name}@${summary.version}`));
+        console.log(pc.green(`✓ Удалён ${summary.slug}@${summary.version}`));
         console.log(pc.dim(`  файлов удалено: ${summary.removedCount}`));
         if (summary.keptCount > 0) {
-          console.log(
-            pc.yellow(`  оставлено (используется другим item'ом): ${summary.keptCount}`),
-          );
+          console.log(pc.yellow(`  оставлено (используется другим плагином): ${summary.keptCount}`));
         }
         if (summary.mergedCount > 0) {
           console.log(
-            pc.yellow(
-              `  оставлено (изменяет общий файл, не удаляется целиком): ${summary.mergedCount}`,
-            ),
+            pc.yellow(`  ключ удалён из общего файла (сам файл не удалялся целиком): ${summary.mergedCount}`),
           );
         }
       }

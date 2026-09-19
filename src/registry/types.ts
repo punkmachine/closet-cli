@@ -1,54 +1,90 @@
-export const ITEM_TYPES = ["rules", "skills", "commands", "agents", "hooks", "mcp", "statusline"] as const;
-export type ItemType = (typeof ITEM_TYPES)[number];
+/**
+ * Контракт HTTP-реестра closet-registry (plan.md, раздел 0): единый
+ * bundle-эндпоинт `GET /v1/plugins/:slug/:version`, `:version` может быть
+ * `"latest"`. Один запрос отдаёт метаданные версии плагина + содержимое
+ * ВСЕХ его файлов сразу (текст как есть, бинарные — base64).
+ *
+ * `PluginComponent`/`AiName` продублированы здесь намеренно, а не
+ * импортированы из `src/config/project-config.ts` — см. конвенцию
+ * "изоляция модулей" в `CLAUDE.md`. Значения синхронизированы с
+ * `PLUGIN_COMPONENTS`/`PLUGIN_FILE_AI_VALUES` на стороне closet-registry.
+ */
+export const PLUGIN_COMPONENTS = [
+  "mcp",
+  "rules",
+  "hooks",
+  "agents",
+  "commands",
+  "skills",
+  "scripts",
+] as const;
 
-export interface ItemFile {
-  /**
-   * Path relative to `.claude/<type>/`, e.g. "naming-conventions.md" or
-   * "git-commit-helper/SKILL.md". Ignored in favor of project-root placement
-   * when `rootPath` is true.
-   */
-  path: string;
-  /**
-   * If true, `path` is resolved relative to the project root instead of
-   * `.claude/<type>/` (e.g. `.mcp.json`, `.claude/scripts/context-monitor.py`).
-   */
-  rootPath?: boolean;
-  /**
-   * If true, the file's JSON content is shallow-merged (top-level keys) into
-   * the existing destination file instead of overwriting it. Used to add
-   * keys like `statusLine` into an already-populated `.claude/settings.json`
-   * without touching unrelated keys.
-   */
-  merge?: boolean;
-  /**
-   * If true, the literal token `{{projectRoot}}` in the file's content is
-   * replaced with the absolute project root path (forward slashes) at
-   * install time, before conflict detection and writing.
-   */
-  template?: boolean;
-}
+export type PluginComponent = (typeof PLUGIN_COMPONENTS)[number];
 
-export interface ItemFileContent extends ItemFile {
+export const AI_NAMES = ["codex", "claude-code"] as const;
+
+export type AiName = (typeof AI_NAMES)[number];
+
+export interface PluginBundleFile {
+  component: PluginComponent;
+  /** `null` — файл общий для всех ИИ, иначе — ai-специфичный вариант. */
+  ai: AiName | null;
+  /** Путь файла внутри своего компонента на сервере (не путь назначения на диске клиента). */
+  relativePath: string;
+  /**
+   * Присутствует в контракте сервера, но НЕ используется closet-cli: место
+   * файла на диске клиента полностью определяется `core/path-mapper.ts`
+   * (component × ai × merge), а не этим флагом — решение уже закреплено
+   * реализацией path-mapper.ts, см. CLAUDE.md.
+   */
+  rootPath: boolean;
+  merge: boolean;
+  mergeKeyPath: string | null;
+  /** Если true — литерал `{{projectRoot}}` в `content` заменяется на абсолютный путь проекта перед использованием. */
+  template: boolean;
+  sha256: string;
+  sizeBytes: string;
+  encoding: "utf8" | "base64";
   content: string;
 }
 
-export interface ItemMetadata {
-  /** Unique item name across the whole registry (across all types) */
-  name: string;
-  type: ItemType;
-  /** semver, e.g. "1.0.0" */
-  version: string;
+export interface PluginBundle {
+  slug: string;
   description: string;
-  /** Names of other items this item depends on (by name, without type) */
+  version: string;
+  changelog: string | null;
+  /** Slug'и зависимостей — без версии, зависимость резолвится всегда на "latest" (plan.md, раздел 0/4 п.9). */
   dependencies: string[];
-  files: ItemFile[];
+  files: PluginBundleFile[];
+}
+
+/**
+ * Один элемент листинга `GET /v1/plugins` (plan.md, раздел 3 п.2) — только
+ * метаданные, без файлов: для `list --all` не нужен полный bundle каждой
+ * версии, только slug + latest semver, чтобы сравнить с локальным состоянием.
+ */
+export interface PluginListItem {
+  slug: string;
+  description: string;
+  latestVersion: string;
+  updatedAt: string;
 }
 
 export interface RegistryClient {
-  /** Latest version of every unique item */
-  listItems(): Promise<ItemMetadata[]>;
-  /** Latest version by name */
-  getItem(name: string): Promise<ItemMetadata | undefined>;
-  /** File contents for a specific version */
-  getItemFiles(name: string, version: string): Promise<ItemFileContent[]>;
+  /**
+   * `version` — конкретный semver либо `"latest"`. `undefined`, если плагин
+   * или указанная версия не найдены (сервер отвечает 404).
+   */
+  getPluginBundle(slug: string, version: string): Promise<PluginBundle | undefined>;
+  /**
+   * Фиксирует факт установки версии плагина на сервере (статистика,
+   * `POST /v1/stats/installs`). Не критично для успеха install/update —
+   * вызывающий код сам решает, насколько мягко обрабатывать ошибку.
+   */
+  recordInstall(slug: string, version: string, cliVersion: string): Promise<void>;
+  /**
+   * Все опубликованные плагины реестра (`GET /v1/plugins`) — используется
+   * только `closet-cli list --all`.
+   */
+  listPlugins(): Promise<PluginListItem[]>;
 }
