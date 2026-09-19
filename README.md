@@ -1,14 +1,20 @@
-# punk-ai
+# closet-cli
 
-CLI для развёртывания и поддержки окружения `.claude/` в проекте из внешнего
-реестра переиспользуемых items — правил, скиллов, слэш-команд, агентов
-и хуков для Claude Code. По духу — как пакетный менеджер, только вместо
-пакетов npm ставятся `rules/`, `skills/`, `commands/`, `agents/`, `hooks/`.
+CLI-инструмент, который создаёт и поддерживает файлы/папки для одного или
+нескольких ИИ-агентов (Claude Code, Codex, ...) в проекте пользователя,
+устанавливая туда «плагины», скачанные с self-hosted `closet-registry`.
+По духу — как пакетный менеджер, только вместо пакетов npm ставятся
+`rules/`, `skills/`, `commands/`, `agents/`, `hooks/`, `mcp/`, `scripts/`.
+
+> **Статус:** `init`/`install`/`update`/`remove`/`list` переведены на новую
+> мультиагентную модель (`closet-cli.json`, плагины вместо items,
+> `HttpRegistryClient` под реальный bundle-контракт `closet-registry`,
+> включая листинг `GET /v1/plugins`), см. `plan.md` в корне монорепо.
 
 ## Установка
 
 ```bash
-pnpm add -g punk-ai
+pnpm add -g @punkmachine/closet-cli
 ```
 
 Требуется Node.js ≥ 22.
@@ -16,53 +22,82 @@ pnpm add -g punk-ai
 ## Быстрый старт
 
 ```bash
-# 1. Инициализировать .claude/ окружение в текущем проекте
-punk-ai init
+# 1. Инициализировать окружение в текущем проекте
+closet-cli init
 
-# 2. Посмотреть, что доступно в реестре
-punk-ai list --all
+# 2. Установить плагин (с автоматическим подтягиванием зависимостей)
+closet-cli install gitflow
 
-# 3. Установить item (с автоматическим подтягиванием зависимостей)
-punk-ai add context7
+# 3. Обновить до последней версии
+closet-cli update gitflow
 
-# 4. Посмотреть, что установлено
-punk-ai list
-
-# 5. Обновить до последней версии
-punk-ai update context7
-
-# 6. Удалить
-punk-ai remove context7
+# 4. Удалить
+closet-cli remove gitflow
 ```
 
 ## Команды
 
-### `punk-ai init`
+### `closet-cli init`
 
-Создаёт в текущей директории:
+Интерактивный диалог (`@clack/prompts`): адрес реестра (`registry.host`),
+токен (`registry.token`, опционально), какие ИИ включить (`Codex`/`Claude Code`)
+и нужно ли сгенерировать корневой `AGENTS.md`.
 
-- `.claude/{rules,skills,commands,agents,hooks}/` — пустые каталоги под установку items;
-- `.claude/settings.json`, `.claude/settings.local.json`;
-- `CLAUDE.md` — стартовый шаблон с разделами «Обзор проекта», «Команды разработки», «Архитектура»;
-- `.claude/scripts/README.md`;
-- `.mcp.json` — пустой шаблон (`{ "mcpServers": {} }`) под будущие MCP-серверы;
-- `.punk-ai.json` — файл состояния проекта (список установленного, URL реестра);
-- добавляет `.claude/settings.local.json` в `.gitignore`.
+По выбранным ИИ создаёт в текущей директории:
 
-Флаги:
+- Claude Code: `.claude/{rules,skills,commands,agents,hooks,scripts}/`,
+  `.claude/settings.json`, `.claude/settings.local.json`,
+  `.claude/scripts/README.md`, `.mcp.json`; добавляет
+  `.claude/settings.local.json` в `.gitignore`.
+- Codex: `.codex/{skills,scripts}/`.
 
-- `--force` — переинициализировать поверх существующего `.claude/`/`.punk-ai.json`.
-- `--registry-url <url>` — URL реестра, который сохраняется в `.punk-ai.json` (по умолчанию `https://registry.punkmachine.dev`).
+Если подтверждено «сгенерировать `AGENTS.md`» — создаёт корневой `AGENTS.md`
+(общая конфигурация поведения для всех ИИ) и, для Claude Code, короткий
+файл-мост `CLAUDE.md` со ссылкой на `AGENTS.md` (Codex и так нативно читает
+`AGENTS.md`, мост ему не нужен). Если не подтверждено — не создаёт ничего из
+этой группы. Повторный `init --force` никогда не перезаписывает уже
+существующие `AGENTS.md`/`CLAUDE.md` — только досоздаёт недостающий
+файл-мост для новых ИИ.
 
-Без `--force` команда откажется работать, если `.claude/` или `.punk-ai.json` уже существуют.
+В конце всегда пишется `closet-cli.json` — файл состояния проекта
+(`registry`, `ai`, `plugins`).
 
-### `punk-ai add <name>`
+Флаги для неинтерактивного запуска (CI, скрипты):
 
-Устанавливает item и все его транзитивные зависимости. Зависимости
-резолвятся заранее (с детектом циклов), после чего все файлы всех items
-записываются на диск за один проход.
+- `--force` — переинициализировать поверх существующего `.claude/`/`.codex/`/`closet-cli.json`.
+- `-y, --yes` — не показывать промпты, использовать флаги/значения по умолчанию везде, где это возможно.
+- `--host <url>` — адрес реестра.
+- `--token <token>` — токен реестра.
+- `--ai <list>` — список ИИ через запятую, например `codex,claude-code`.
+- `--agents-md` / `--no-agents-md` — сгенерировать `AGENTS.md`+мосты или пропустить эту группу без вопроса.
 
-Если какой-то из файлов уже существует на диске и отличается по содержимому:
+Любой из этих флагов пропускает соответствующий промпт даже без `--yes`.
+Без `--force` команда откажется работать, если `.claude/`, `.codex/` или
+`closet-cli.json` уже существуют. В неинтерактивном окружении (нет TTY)
+`--host` обязателен всегда, а `--ai`/`--agents-md`/`--no-agents-md` —
+обязательны, если не передан `--yes` (у него есть дефолты: оба ИИ, генерация
+`AGENTS.md`).
+
+### `closet-cli install <slug>`
+
+Устанавливает плагин и все его транзитивные зависимости (резолвятся всегда
+на `"latest"` — сервер не пиннит версии зависимостей). Каждый файл плагина
+устанавливается под все ИИ, для которых он применим:
+
+- файл с `ai: null` (общий) — под КАЖДЫЙ включённый в проекте ИИ отдельно
+  (у Claude Code и Codex непересекающиеся деревья каталогов, поэтому общий
+  файл физически дублируется в оба дерева);
+- файл с конкретным `ai` — только под этот ИИ, и только если он включён
+  в `closet-cli.json` (`ai.*`).
+
+Компонент без аналога у конкретного ИИ (например, `commands` для Codex) —
+пропускается с уведомлением в выводе команды, не ошибкой. Merge-компоненты
+(`mcp`/`hooks`/`agents` для Codex, `mcp`/`hooks` для Claude Code) мёржатся
+в существующий `.mcp.json`/`.claude/settings.json`/`.codex/config.toml`
+по именованному слоту (`mergeKeyPath`), не трогая остальные ключи файла.
+
+Если какой-то из файлов уже существует на диске и отличается по содержимому
+(или merge-слот уже занят чужим значением):
 
 - в интерактивном терминале — по каждому конфликту будет задан вопрос
   «Перезаписать?»;
@@ -71,71 +106,87 @@ punk-ai remove context7
 - в неинтерактивном окружении (CI, пайпы) без `--force`/`--skip` команда
   завершится ошибкой со списком конфликтующих файлов.
 
-`--force` и `--skip` взаимоисключающие.
+`--force` и `--skip` взаимоисключающие. Плагин, который уже установлен,
+повторно `install` не ставится — команда укажет использовать `update`.
 
-### `punk-ai list`
+### `closet-cli update [name]`
 
-Без флагов — список установленных в проекте items.
+Обновляет один плагин (`update <name>`) либо все установленные с
+`autoupdate: true` (`update --all`; `update <name>` обновляет независимо от
+`autoupdate`). Плагины, у которых уже установлена последняя версия,
+пропускаются с сообщением «уже последняя версия».
 
-`--all` — список всех items, доступных в реестре, с пометкой:
+Плагин обновляется целиком, только если НИ ОДИН его ранее установленный файл
+не был изменён вручную с момента установки (обычные файлы — сравнением
+sha256, merge-слоты — сравнением с сохранённым `mergeValue`). Если изменён
+хотя бы один файл — весь плагин пропускается с предупреждением, версия в
+`closet-cli.json` не поднимается. `--force` перезаписывает даже изменённые
+файлы. Компоненты, убранные в новой версии плагина, удаляются с диска той же
+логикой, что и `remove`. Новые конфликты (файл, которого не было в старой
+версии, столкнулся с посторонним содержимым) разрешаются как в `install`
+(интерактивно либо `--force`).
 
-- `[installed@X.Y.Z]` (+ `(доступно обновление до …)`, если в реестре есть более новая версия);
-- `[not installed]`.
+### `closet-cli remove [name]`
 
-### `punk-ai update [name]`
-
-Обновляет один item (`update <name>`) либо все установленные (`update --all`)
-до последней версии из реестра. Items, у которых уже установлена последняя
-версия, пропускаются с сообщением «уже последняя версия». Конфликты файлов
-разрешаются так же, как в `add` (`--force`/`--skip`/интерактивно).
-
-### `punk-ai remove [name]`
-
-Удаляет один установленный item (`remove <name>`) либо все (`remove --all`).
-Удаление файлов учитывает reference counting: если один и тот же файл на
-диске используется ещё каким-то оставшимся установленным item'ом, он не
+Удаляет один установленный плагин (`remove <name>`) либо все (`remove --all`).
+Обычные файлы удаляются с учётом reference counting: если один и тот же файл
+на диске используется ещё каким-то оставшимся установленным плагином, он не
 удаляется. Пустые директории после удаления файла подчищаются (best-effort).
+Merge-файлы (`.mcp.json` и т. п.) никогда не удаляются целиком — только свой
+именованный слот внутри них, остальные ключи (от других плагинов) не трогаются.
 
-`remove --all` не трогает `.claude/settings.json`, `CLAUDE.md` и `.claude/scripts/` —
-удаляются только файлы, которые сам `punk-ai` установил и отследил
-в `.punk-ai.json`.
+### `closet-cli list`
 
-## `.punk-ai.json`
+Без флагов — список установленных в проекте плагинов (версия, число файлов,
+статус `autoupdate`) из локального `closet-cli.json`, без обращения к сети.
 
-Файл состояния проекта, коммитится в репозиторий (не в `.gitignore`):
+`closet-cli list --all` — все плагины, опубликованные в реестре (запрос к
+`GET /v1/plugins`), с пометкой `[installed@version]`/`[not installed]` и
+подсказкой, если в реестре есть более новая версия установленного плагина.
+
+## `closet-cli.json`
+
+Файл состояния проекта, коммитится в репозиторий (без ведущей точки, не в `.gitignore`):
 
 ```json
 {
-  "registryUrl": "https://registry.punkmachine.dev",
-  "installed": {
-    "context7-rules": {
-      "type": "rules",
+  "registry": { "host": "https://registry.example.com", "token": "…" },
+  "ai": { "codex": true, "claude-code": true },
+  "plugins": {
+    "gitflow": {
       "version": "1.0.0",
-      "files": [{ "path": "context7.md" }]
-    },
-    "context7": {
-      "type": "mcp",
-      "version": "1.0.0",
+      "autoupdate": true,
       "files": [
-        { "path": ".mcp.json", "rootPath": true, "merge": true },
-        { "path": ".claude/settings.local.json", "rootPath": true, "merge": true }
+        { "component": "skills", "ai": null, "path": ".claude/skills/gitflow/SKILL.md", "sha256": "…" },
+        { "component": "commands", "ai": "claude-code", "path": ".claude/commands/gitflow.md", "sha256": "…" },
+        {
+          "component": "mcp",
+          "ai": null,
+          "path": ".mcp.json",
+          "merge": true,
+          "mergeKeyPath": "mcpServers.gitflow-fs",
+          "mergeValue": { "command": "npx", "args": ["gitflow-mcp"] }
+        }
       ]
     }
-  },
-  "createdAt": "2026-01-01T00:00:00.000Z"
+  }
 }
 ```
 
-Каждый элемент `files` — не просто путь, а объект `{ path, rootPath?, merge? }`:
-
-- `rootPath: true` — файл ставится относительно корня проекта, а не `.claude/<type>/`
-  (например, `.mcp.json`, `.claude/scripts/context-monitor.py`).
-- `merge: true` — файл не перезаписывается целиком, а рекурсивно мёржится в уже
-  существующий JSON-файл на диске (вложенные объекты объединяются по ключам, а
-  не заменяют друг друга целиком — это важно для файлов вроде `.mcp.json`,
-  где несколько разных item'ов добавляют свой сервер под разными ключами
-  внутри одного `mcpServers`); `remove` никогда не удаляет такие файлы
-  целиком, только перестаёт их отслеживать.
+- `registry.host` — адрес self-hosted реестра; `registry.token` — Bearer-токен
+  (сервер требует токен на всех `/v1/*`, так что на практике поле обязательно).
+- `ai` — какие ИИ-агенты включены в проекте. Ключи ограничены хардкоженным
+  в CLI списком (`codex`, `claude-code`).
+- `plugins.<name>.files` — список файлов установленного плагина:
+  - `component` — один из `mcp | rules | hooks | agents | commands | skills | scripts`;
+  - `ai: null` — файл общий для всех ИИ, иначе — ai-специфичный вариант;
+  - обычные файлы отслеживаются по `sha256`;
+  - merge-файлы (`merge: true`) не перезаписываются целиком, а мёржатся по
+    именованному ключу `mergeKeyPath` (например, `mcpServers.gitflow-fs`);
+    `mergeValue` хранит именно то значение, которое туда положил плагин —
+    `update` сравнивает его с текущим значением на диске (`deepEqual`), без
+    хеширования; `remove` никогда не удаляет такие файлы целиком, только
+    перестаёт отслеживать соответствующий ключ.
 
 ## Разработка
 
@@ -151,31 +202,25 @@ pnpm typecheck     # tsc --noEmit, без эмита
 Локальный прогон собранного CLI из отдельной тестовой директории:
 
 ```bash
-mkdir /tmp/punk-ai-test && cd /tmp/punk-ai-test
-node /путь/до/punk-ai-cli/dist/cli.js init
+mkdir /tmp/closet-cli-test && cd /tmp/closet-cli-test
+node /путь/до/closet-cli/dist/cli.js init
 ```
 
 ### Реестр
 
-Сейчас единственный источник items — локальные фикстуры в `fixtures/`
-(`FixtureRegistryClient`), имитирующие будущий HTTP-реестр. Структура:
+`HttpRegistryClient` (`src/registry/http-client.ts`) ходит в self-hosted
+`closet-registry` по адресу и токену из `closet-cli.json` (`registry.host`/
+`registry.token`): `GET /v1/plugins/:slug/:version` (`:version` может быть
+`"latest"`) отдаёт bundle-ответ (метаданные версии + содержимое всех файлов
+сразу), `POST /v1/stats/installs` фиксирует факт установки. Оба запроса несут
+`Authorization: Bearer <token>` — сервер требует токен на всех `/v1/*`,
+включая чтение.
 
-```
-fixtures/
-  index.json                         # метаданные всех items и версий
-  items/<type>/<name>/<version>/...  # содержимое файлов
-```
-
-Текущий набор фикстур в `fixtures/`:
-- `mcp/context7` — регистрирует Context7 MCP-сервер в `.mcp.json` (корень проекта,
-  ключ API берётся из `${env:CONTEXT7_API_KEY}`), дозаписывает плейсхолдер
-  `CONTEXT7_API_KEY` в `.claude/settings.local.json` (`rootPath` + `merge`) и зависит
-  от `rules/context7-rules` и `skills/context7-mcp` — для проверки резолвинга
-  зависимостей и `rootPath`-файлов;
-- `rules/context7-rules`, `skills/context7-mcp` — правило и скилл для работы с Context7;
-- `statusline/statusline` — ставит `.claude/scripts/context-monitor.py` (`rootPath: true`) и
-  мёржит ключ `statusLine` в `.claude/settings.json` (`rootPath` + `merge` + `template`,
-  плейсхолдер `{{projectRoot}}` подставляется абсолютным путём проекта при установке).
+Локальных фикстур/имитации реестра больше нет (старый `FixtureRegistryClient`
+под контракт `/v1/items` удалён вместе с `fixtures/` — контракт сервера
+изменился полностью, старые фикстуры ему не соответствовали). Для ручной
+проверки без поднятого `closet-registry` можно временно поднять минимальный
+HTTP-мок, реализующий эти два эндпоинта.
 
 ### Тесты
 

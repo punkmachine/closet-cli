@@ -20,6 +20,9 @@ importers:
       semver:
         specifier: ^7.6.3
         version: 7.8.5
+      smol-toml:
+        specifier: ^1.8.0
+        version: 1.8.0
       zod:
         specifier: ^3.23.8
         version: 3.25.76
@@ -523,6 +526,10 @@ packages:
   sisteransi@1.0.5:
     resolution: {integrity: sha512-bLGGlR1QxBcynn2d5YmDX4MGjlZvy2MRBDRNHLJ8VI6l6+9FUiyTFNJ0IveOSP0bcXgVDPRcfGqA0pjaqUpfVg==}
 
+  smol-toml@1.8.0:
+    resolution: {integrity: sha512-kCZr2V3ch9i00x8zXRhjUNVcjG9ijES5dDudkXvUVCT5QlJNQWElSJdZqyPemffHoLNUYwOcou0Fy+ojN0uHSQ==}
+    engines: {node: '>= 18'}
+
   source-map@0.7.6:
     resolution: {integrity: sha512-i5uvt8C3ikiWeNZSVZNWcfZPItFQOsYTUAOkcUPGd8DqDy1uOUikjt5dG+uRlwyvR108Fb9DOd4GvXfT0N2/uQ==}
     engines: {node: '>= 12'}
@@ -932,6 +939,8 @@ snapshots:
   semver@7.8.5: {}
 
   sisteransi@1.0.5: {}
+
+  smol-toml@1.8.0: {}
 
   source-map@0.7.6: {}
 
