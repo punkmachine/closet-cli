@@ -1,5 +1,5 @@
 {
-  "name": "@punkmachine/closet-cli",
+  "name": "@punkdevs/closet-cli",
   "version": "0.1.0",
   "description": "CLI to install and maintain AI agent plugin files (Claude Code, Codex, ...) in a project from a self-hosted closet-registry",
   "type": "module",
@@ -38,7 +38,10 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
-    "prepublishOnly": "pnpm build"
+    "prepublishOnly": "pnpm build",
+    "release:patch": "pnpm version patch && git push --follow-tags && pnpm publish",
+    "release:minor": "pnpm version minor && git push --follow-tags && pnpm publish",
+    "release:major": "pnpm version major && git push --follow-tags && pnpm publish"
   },
   "dependencies": {
     "@clack/prompts": "^0.9.1",
