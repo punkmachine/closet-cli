@@ -1,6 +1,6 @@
 {
   "name": "@punkdevs/closet-cli",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "CLI to install and maintain AI agent plugin files (Claude Code, Codex, ...) in a project from a self-hosted closet-registry",
   "type": "module",
   "license": "MIT",
