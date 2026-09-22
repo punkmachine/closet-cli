@@ -5,7 +5,7 @@ CLI-инструмент, который создаёт и поддержива�
 ## Установка
 
 ```bash
-pnpm add -g @punkmachine/closet-cli
+pnpm add -g @punkdevs/closet-cli
 ```
 
 Требуется Node.js ≥ 22.
