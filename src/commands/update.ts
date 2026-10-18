@@ -73,7 +73,7 @@ export function registerUpdateCommand(program: Command): void {
         return;
       }
 
-      const registry = createAuthorizedClient(config);
+      const registry = createAuthorizedClient(projectRoot, config);
       if (!registry) {
         process.exitCode = 1;
         return;

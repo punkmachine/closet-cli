@@ -5,7 +5,8 @@ import pc from "picocolors";
 import * as p from "@clack/prompts";
 
 import { resolveToken, saveToken } from "../config/credentials.js";
-import { claudeDir, itemTypeDir, scriptsDir } from "../config/paths.js";
+import { ensureGitignoreEntry } from "../config/gitignore.js";
+import { claudeDir, itemTypeDir, LOCAL_CONFIG_FILE_NAME, scriptsDir } from "../config/paths.js";
 import {
   AI_NAMES,
   type AiConfig,
@@ -134,7 +135,7 @@ async function resolveRegistryConfig(
 }
 
 /**
- * Резолвит токен для персонального файла (`credentials.json`, НЕ `closet-cli.json`):
+ * Резолвит токен для локального файла (`closet-cli.local.json`, НЕ `closet-cli.json`):
  * флаг `--token` или скрытый промпт. Пустой ответ / нет TTY — `undefined`
  * (токен можно задать позже через `closet-cli login` или `CLOSET_CLI_TOKEN`).
  */
@@ -151,7 +152,7 @@ async function resolveInitToken(
   }
 
   const answer = await p.password({
-    message: "Токен реестра (clt_…, сохраняется вне репозитория)",
+    message: "Токен реестра (clt_…, сохраняется в closet-cli.local.json, не коммитится)",
   });
 
   if (p.isCancel(answer)) {
@@ -258,32 +259,6 @@ function copyTemplateFileIfMissing(
   return true;
 }
 
-/**
- * Создаёт `.gitignore` в корне проекта (если его нет) либо дописывает в него
- * запись `.claude/settings.local.json`, если её там ещё нет.
- */
-function ensureGitignoreEntry(projectRoot: string): void {
-  const gitignorePath = path.join(projectRoot, ".gitignore");
-
-  if (!fs.existsSync(gitignorePath)) {
-    fs.writeFileSync(gitignorePath, `${GITIGNORE_ENTRY}\n`, "utf-8");
-    return;
-  }
-
-  const content = fs.readFileSync(gitignorePath, "utf-8");
-  const lines = content.split(/\r?\n/);
-  const alreadyPresent = lines.some((line) => line === GITIGNORE_ENTRY);
-
-  if (alreadyPresent) {
-    return;
-  }
-
-  const needsLeadingNewline = content.length > 0 && !content.endsWith("\n");
-  const suffix = `${needsLeadingNewline ? "\n" : ""}${GITIGNORE_ENTRY}\n`;
-
-  fs.appendFileSync(gitignorePath, suffix, "utf-8");
-}
-
 function setupClaudeCode(projectRoot: string, templatesDir: string): void {
   for (const type of CLAUDE_ITEM_TYPE_DIRS) {
     fs.mkdirSync(itemTypeDir(projectRoot, type), { recursive: true });
@@ -300,7 +275,7 @@ function setupClaudeCode(projectRoot: string, templatesDir: string): void {
 
   copyTemplateFile(templatesDir, "mcp.json", path.join(projectRoot, ".mcp.json"));
 
-  ensureGitignoreEntry(projectRoot);
+  ensureGitignoreEntry(projectRoot, GITIGNORE_ENTRY);
 }
 
 function setupCodex(projectRoot: string): void {
@@ -384,8 +359,10 @@ export function registerInitCommand(program: Command, templatesDir: string): voi
 
         writeProjectConfig(projectRoot, createInitialProjectConfig(registry, ai));
 
+        // Последней строкой в .gitignore: файл появится позже (при `login`), но игнорироваться должен сразу.
+        ensureGitignoreEntry(projectRoot, LOCAL_CONFIG_FILE_NAME);
         if (token !== undefined) {
-          saveToken(registry.host, token);
+          saveToken(projectRoot, registry.host, token);
         }
       } catch (error) {
         const details = error instanceof Error ? error.message : String(error);
@@ -406,7 +383,7 @@ export function registerInitCommand(program: Command, templatesDir: string): voi
       }
       summary.push("closet-cli.json");
       if (token !== undefined) {
-        summary.push("Токен сохранён в персональный файл (вне репозитория)");
+        summary.push("closet-cli.local.json (токен, добавлен в .gitignore)");
       }
 
       if (interactive && !opts.yes) {
@@ -419,7 +396,7 @@ export function registerInitCommand(program: Command, templatesDir: string): voi
         console.log(pc.green(`  ${line}`));
       }
 
-      if (token === undefined && !resolveToken(registry.host)) {
+      if (token === undefined && !resolveToken(projectRoot, registry.host)) {
         console.log(
           pc.yellow(
             "Токен не задан: до `closet-cli login` (или CLOSET_CLI_TOKEN) команды install/update/list --all работать не будут.",

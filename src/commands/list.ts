@@ -45,7 +45,7 @@ export function registerListCommand(program: Command): void {
       }
 
       if (opts.all) {
-        const registry = createAuthorizedClient(config);
+        const registry = createAuthorizedClient(projectRoot, config);
         if (!registry) {
           process.exitCode = 1;
           return;

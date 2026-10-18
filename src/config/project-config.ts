@@ -67,7 +67,7 @@ export type InstalledPlugin = z.infer<typeof installedPluginSchema>;
 
 /**
  * Схема секции `registry`: адрес self-hosted реестра. Токен здесь НЕ хранится
- * (файл коммитится) — он лежит в `credentials.json`, см. `config/credentials.ts`.
+ * (файл коммитится) — он лежит в `closet-cli.local.json`, см. `config/credentials.ts`.
  * `passthrough` оставляет устаревшее поле `token` из старых файлов нетронутым
  * при перезаписи конфига: удалять его молча нельзя, это решение пользователя.
  */

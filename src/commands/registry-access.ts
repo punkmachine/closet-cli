@@ -11,8 +11,8 @@ import { HttpRegistryClient } from "../registry/http-client.js";
  * сетевого запроса (вызывающий выставляет `exitCode`). Устаревший токен в
  * `closet-cli.json` работает, но с предупреждением (один раз за запуск).
  */
-export function createAuthorizedClient(config: ProjectConfig): HttpRegistryClient | undefined {
-  const resolved = resolveToken(config.registry.host, config);
+export function createAuthorizedClient(projectRoot: string, config: ProjectConfig): HttpRegistryClient | undefined {
+  const resolved = resolveToken(projectRoot, config.registry.host, config);
 
   if (!resolved) {
     console.error(

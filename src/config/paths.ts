@@ -8,18 +8,15 @@ export const CLAUDE_DIR_NAME = ".claude";
 /**
  * Имя файла конфигурации closet-cli в корне проекта пользователя.
  * Без ведущей точки — файл коммитится в репозиторий (токен в него не пишется,
- * персональные данные лежат в `credentials.json`, см. `config/credentials.ts`).
+ * персональные данные лежат в `closet-cli.local.json`, см. `config/credentials.ts`).
  */
 export const PROJECT_CONFIG_FILE_NAME = "closet-cli.json";
 
-/** Каталог персональных данных closet-cli в домашнем каталоге пользователя. */
-export const USER_DIR_NAME = ".closet-cli";
-
-/** Файл с токенами реестров внутри `USER_DIR_NAME`. */
-export const CREDENTIALS_FILE_NAME = "credentials.json";
-
-/** Переменная окружения: переопределяет каталог `~/.closet-cli` (удобно для тестов). */
-export const HOME_ENV_VAR = "CLOSET_CLI_HOME";
+/**
+ * Имя локального файла с токенами реестров в корне проекта. Не коммитится:
+ * `closet-cli` сам добавляет его в `.gitignore`.
+ */
+export const LOCAL_CONFIG_FILE_NAME = "closet-cli.local.json";
 
 /** Переменная окружения: токен реестра для CI и разовых запусков. */
 export const TOKEN_ENV_VAR = "CLOSET_CLI_TOKEN";

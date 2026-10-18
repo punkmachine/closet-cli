@@ -50,7 +50,7 @@ export function registerInstallCommand(program: Command, cliVersion: string): vo
         return;
       }
 
-      const registry = createAuthorizedClient(config);
+      const registry = createAuthorizedClient(projectRoot, config);
       if (!registry) {
         process.exitCode = 1;
         return;

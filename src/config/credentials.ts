@@ -1,15 +1,16 @@
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { z } from "zod";
 
-import { CREDENTIALS_FILE_NAME, HOME_ENV_VAR, TOKEN_ENV_VAR, USER_DIR_NAME } from "./paths.js";
+import { ensureGitignoreEntry } from "./gitignore.js";
+import { LOCAL_CONFIG_FILE_NAME, TOKEN_ENV_VAR } from "./paths.js";
 import { readLegacyToken, type ProjectConfig } from "./project-config.js";
 
 /**
- * Персональные учётные данные: токены реестров в `~/.closet-cli/credentials.json`
- * (вне репозитория). Ключ — нормализованный `registry.host`: токен принадлежит
- * реестру, а не проекту, поэтому один токен работает во всех проектах.
+ * Персональные учётные данные проекта: токены реестров в `closet-cli.local.json`
+ * в корне проекта (файл в `.gitignore`, не коммитится). Ключ — нормализованный
+ * `registry.host`: токен, выданный одним реестром, не уйдёт на другой после
+ * смены `registry.host`.
  */
 export const credentialsSchema = z.object({
   registries: z.record(z.string(), z.object({ token: z.string() })),
@@ -17,7 +18,7 @@ export const credentialsSchema = z.object({
 
 export type Credentials = z.infer<typeof credentialsSchema>;
 
-export type TokenSource = "env" | "credentials" | "legacy-project-config";
+export type TokenSource = "env" | "local-config" | "legacy-project-config";
 
 export interface ResolvedToken {
   token: string;
@@ -25,15 +26,14 @@ export interface ResolvedToken {
 }
 
 /**
- * Путь до `credentials.json` с учётом `CLOSET_CLI_HOME`.
+ * Путь до `closet-cli.local.json` в корне проекта.
  */
-export function credentialsPath(): string {
-  const dir = process.env[HOME_ENV_VAR] || path.join(os.homedir(), USER_DIR_NAME);
-  return path.join(dir, CREDENTIALS_FILE_NAME);
+export function credentialsPath(projectRoot: string): string {
+  return path.join(projectRoot, LOCAL_CONFIG_FILE_NAME);
 }
 
 /**
- * Нормализует адрес реестра для ключа в `credentials.json`: origin без
+ * Нормализует адрес реестра для ключа в `closet-cli.local.json`: origin без
  * завершающего `/`, хост в нижнем регистре. Не-URL возвращается как есть.
  */
 export function normalizeRegistryHost(host: string): string {
@@ -45,10 +45,10 @@ export function normalizeRegistryHost(host: string): string {
 }
 
 /**
- * Читает `credentials.json`. Отсутствующий файл — пустые данные; повреждённый — ошибка.
+ * Читает `closet-cli.local.json`. Отсутствующий файл — пустые данные; повреждённый — ошибка.
  */
-export function readCredentials(): Credentials {
-  const filePath = credentialsPath();
+export function readCredentials(projectRoot: string): Credentials {
+  const filePath = credentialsPath(projectRoot);
   if (!fs.existsSync(filePath)) {
     return { registries: {} };
   }
@@ -69,12 +69,13 @@ export function readCredentials(): Credentials {
 }
 
 /**
- * Записывает `credentials.json` (создаёт каталог, права `0600` на POSIX;
- * на Windows chmod ничего не даёт — полагаемся на профиль пользователя).
+ * Записывает `closet-cli.local.json` (права `0600` на POSIX; на Windows chmod
+ * ничего не даёт). Сначала гарантирует запись в `.gitignore`, чтобы токен не
+ * успел попасть под `git add`.
  */
-export function writeCredentials(credentials: Credentials): void {
-  const filePath = credentialsPath();
-  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+export function writeCredentials(projectRoot: string, credentials: Credentials): void {
+  const filePath = credentialsPath(projectRoot);
+  ensureGitignoreEntry(projectRoot, LOCAL_CONFIG_FILE_NAME);
   fs.writeFileSync(filePath, JSON.stringify(credentials, null, 2), { encoding: "utf-8", mode: 0o600 });
   // mode в writeFileSync не действует на уже существующий файл.
   if (process.platform !== "win32") {
@@ -85,18 +86,18 @@ export function writeCredentials(credentials: Credentials): void {
 /**
  * Сохраняет токен для реестра `host`, не трогая записи других реестров.
  */
-export function saveToken(host: string, token: string): void {
-  const credentials = readCredentials();
+export function saveToken(projectRoot: string, host: string, token: string): void {
+  const credentials = readCredentials(projectRoot);
   credentials.registries[normalizeRegistryHost(host)] = { token };
-  writeCredentials(credentials);
+  writeCredentials(projectRoot, credentials);
 }
 
 /**
  * Удаляет запись для `host`. Если записей не осталось — удаляет файл.
  * Возвращает `true`, если запись была.
  */
-export function removeCredentials(host: string): boolean {
-  const credentials = readCredentials();
+export function removeCredentials(projectRoot: string, host: string): boolean {
+  const credentials = readCredentials(projectRoot);
   const key = normalizeRegistryHost(host);
   if (!(key in credentials.registries)) {
     return false;
@@ -104,26 +105,30 @@ export function removeCredentials(host: string): boolean {
 
   delete credentials.registries[key];
   if (Object.keys(credentials.registries).length === 0) {
-    fs.rmSync(credentialsPath(), { force: true });
+    fs.rmSync(credentialsPath(projectRoot), { force: true });
   } else {
-    writeCredentials(credentials);
+    writeCredentials(projectRoot, credentials);
   }
   return true;
 }
 
 /**
- * Токен для реестра `host`. Приоритет: `CLOSET_CLI_TOKEN` → `credentials.json`
+ * Токен для реестра `host`. Приоритет: `CLOSET_CLI_TOKEN` → `closet-cli.local.json`
  * → (legacy) `registry.token` из `closet-cli.json`. `undefined` — токена нет нигде.
  */
-export function resolveToken(host: string, projectConfig?: ProjectConfig): ResolvedToken | undefined {
+export function resolveToken(
+  projectRoot: string,
+  host: string,
+  projectConfig?: ProjectConfig,
+): ResolvedToken | undefined {
   const fromEnv = process.env[TOKEN_ENV_VAR];
   if (fromEnv) {
     return { token: fromEnv, source: "env" };
   }
 
-  const stored = readCredentials().registries[normalizeRegistryHost(host)]?.token;
+  const stored = readCredentials(projectRoot).registries[normalizeRegistryHost(host)]?.token;
   if (stored) {
-    return { token: stored, source: "credentials" };
+    return { token: stored, source: "local-config" };
   }
 
   const legacy = projectConfig ? readLegacyToken(projectConfig) : undefined;

@@ -82,7 +82,7 @@ async function resolveHost(flag: string | undefined, config = tryReadConfig()): 
 export function registerLoginCommand(program: Command): void {
   program
     .command("login")
-    .description("Save a personal registry API token (clt_…) outside the repository")
+    .description("Save a personal registry API token (clt_…) to the git-ignored closet-cli.local.json")
     .option("--host <url>", "Адрес closet-registry (по умолчанию из closet-cli.json)")
     .option("--token <token>", "Персональный токен реестра (clt_…)")
     .action(async (opts: LoginCommandOptions) => {
@@ -128,9 +128,9 @@ export function registerLoginCommand(program: Command): void {
 
       try {
         const user = await new HttpRegistryClient(host, token).getMe();
-        saveToken(host, token);
+        saveToken(process.cwd(), host, token);
         console.log(pc.green(`Вошли в ${normalizeRegistryHost(host)} как ${user.username} (${user.role}).`));
-        console.log(pc.dim("Токен сохранён в персональный файл вне репозитория."));
+        console.log(pc.dim("Токен сохранён в closet-cli.local.json (файл добавлен в .gitignore)."));
       } catch (error) {
         printError(error instanceof Error ? error.message : String(error));
       }
@@ -147,7 +147,7 @@ export function registerLogoutCommand(program: Command): void {
         const host = await resolveHost(opts.host);
         if (host === undefined) return;
 
-        if (removeCredentials(host)) {
+        if (removeCredentials(process.cwd(), host)) {
           console.log(pc.green(`Токен для ${normalizeRegistryHost(host)} удалён.`));
         } else {
           console.log(pc.dim(`Сохранённого токена для ${normalizeRegistryHost(host)} нет.`));
@@ -169,7 +169,7 @@ export function registerWhoamiCommand(program: Command): void {
         const host = await resolveHost(opts.host, config);
         if (host === undefined) return;
 
-        const resolved = resolveToken(host, config);
+        const resolved = resolveToken(process.cwd(), host, config);
         if (!resolved) {
           printError(
             `Нет токена для ${normalizeRegistryHost(host)}. Выполните \`closet-cli login\` или задайте CLOSET_CLI_TOKEN.`,
