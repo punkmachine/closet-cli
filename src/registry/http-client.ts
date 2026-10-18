@@ -1,14 +1,49 @@
-import type { PluginBundle, PluginListItem, RegistryClient } from "./types.js";
+import type { PluginBundle, PluginListItem, RegistryClient, RegistryUser } from "./types.js";
 
 interface ErrorResponseBody {
   error?: string;
+  code?: string;
 }
 
 /**
- * `HttpRegistryClient` под реальный контракт closet-registry (plan.md,
- * раздел 0): bundle-эндпоинт чтения + `Authorization: Bearer <token>` на
- * КАЖДЫЙ запрос под `/v1/*` — сервер требует токен и на чтение, не только
- * на запись (см. `closet-registry/CLAUDE.md`, раздел про `admin-auth.ts`).
+ * Проблема авторизации/прав (`401`/`403`): позволяет командам отличать её от
+ * прочих ошибок реестра. `message` уже содержит текст для пользователя.
+ */
+export class RegistryAuthError extends Error {
+  constructor(
+    message: string,
+    readonly status: 401 | 403,
+    readonly code: string | undefined,
+    readonly retryAfterSeconds: number | undefined,
+  ) {
+    super(message);
+    this.name = "RegistryAuthError";
+  }
+}
+
+function describeAuthError(status: 401 | 403, code: string | undefined, retryAfter: number | undefined): string {
+  if (status === 401) {
+    return "Токен недействителен: выпустите новый в админке реестра и обновите его (`closet-cli login`).";
+  }
+  switch (code) {
+    case "account_disabled":
+      return "Аккаунт отключён, обратитесь к администратору реестра.";
+    case "account_locked":
+      return retryAfter !== undefined
+        ? `Аккаунт временно заблокирован, повторите через ${retryAfter} с.`
+        : "Аккаунт временно заблокирован, повторите позже.";
+    case "password_change_required":
+      return "Войдите в админку реестра и смените временный пароль.";
+    default:
+      return "Недостаточно прав для операции.";
+  }
+}
+
+/**
+ * `HttpRegistryClient` под контракт closet-registry (`@closet/contract`):
+ * bundle-эндпоинт чтения + `Authorization: Bearer <clt_…>` на КАЖДЫЙ запрос
+ * под `/v1/*` — сервер требует токен и на чтение (публичен только `/health`).
+ * Токен резолвится вызывающим кодом (`config/credentials.ts`).
  */
 export class HttpRegistryClient implements RegistryClient {
   constructor(
@@ -33,6 +68,12 @@ export class HttpRegistryClient implements RegistryClient {
     const response = await this.request("GET", "/v1/plugins", undefined);
     const body = (await response.json()) as { plugins: PluginListItem[] };
     return body.plugins;
+  }
+
+  async getMe(): Promise<RegistryUser> {
+    const response = await this.request("GET", "/v1/auth/me", undefined);
+    const body = (await response.json()) as { user: RegistryUser };
+    return body.user;
   }
 
   private async request(
@@ -68,8 +109,10 @@ export class HttpRegistryClient implements RegistryClient {
     }
 
     let details = "";
+    let errorCode: string | undefined;
     try {
       const responseBody = (await response.json()) as ErrorResponseBody;
+      errorCode = responseBody.code;
       if (responseBody.error) {
         details = `: ${responseBody.error}`;
       }
@@ -77,9 +120,14 @@ export class HttpRegistryClient implements RegistryClient {
       // Тело ответа не JSON или пустое — используем только статус-код.
     }
 
-    if (response.status === 401) {
-      throw new Error(
-        `Registry отклонил запрос ${method} ${url} -> 401 Unauthorized. Проверьте registry.token в closet-cli.json${details}`,
+    if (response.status === 401 || response.status === 403) {
+      const retryHeader = Number(response.headers.get("retry-after"));
+      const retryAfter = Number.isFinite(retryHeader) && retryHeader > 0 ? retryHeader : undefined;
+      throw new RegistryAuthError(
+        describeAuthError(response.status, errorCode, retryAfter),
+        response.status,
+        errorCode,
+        retryAfter,
       );
     }
 

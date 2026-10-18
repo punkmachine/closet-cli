@@ -8,7 +8,7 @@ import { ConflictResolutionError, type ConflictMode } from "../core/conflict.js"
 import { DependencyResolutionError, resolvePluginClosure } from "../core/dependency-resolver.js";
 import { installBundles, isPreviouslyTrackedFileUnchanged, trackedFileIdentityKey } from "../core/installer.js";
 import { collectUsedDestPaths, removeTrackedFile } from "../core/removal.js";
-import { HttpRegistryClient } from "../registry/http-client.js";
+import { createAuthorizedClient } from "./registry-access.js";
 
 interface UpdateCommandOptions {
   all?: boolean;
@@ -73,7 +73,11 @@ export function registerUpdateCommand(program: Command): void {
         return;
       }
 
-      const registry = new HttpRegistryClient(config.registry.host, config.registry.token);
+      const registry = createAuthorizedClient(config);
+      if (!registry) {
+        process.exitCode = 1;
+        return;
+      }
 
       // process.exitCode (не process.exit) начиная отсюда: после ≥2 вызовов
       // fetch (undici) в этом процессе на Windows/Node 24 воспроизводимо

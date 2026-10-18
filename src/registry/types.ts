@@ -1,13 +1,15 @@
 /**
- * Контракт HTTP-реестра closet-registry (plan.md, раздел 0): единый
- * bundle-эндпоинт `GET /v1/plugins/:slug/:version`, `:version` может быть
- * `"latest"`. Один запрос отдаёт метаданные версии плагина + содержимое
- * ВСЕХ его файлов сразу (текст как есть, бинарные — base64).
+ * Контракт HTTP-реестра closet-registry: единый bundle-эндпоинт
+ * `GET /v1/plugins/:slug/:version`, `:version` может быть `"latest"`. Один
+ * запрос отдаёт метаданные версии плагина + содержимое ВСЕХ его файлов сразу
+ * (текст как есть, бинарные — base64). Все `/v1/*` требуют
+ * `Authorization: Bearer <clt_…>`.
  *
- * `PluginComponent`/`AiName` продублированы здесь намеренно, а не
- * импортированы из `src/config/project-config.ts` — см. конвенцию
- * "изоляция модулей" в `CLAUDE.md`. Значения синхронизированы с
- * `PLUGIN_COMPONENTS`/`PLUGIN_FILE_AI_VALUES` на стороне closet-registry.
+ * Типы продублированы с `@closet/contract` (`packages/contract/src/`)
+ * намеренно — CLI от пакета не зависит. `PluginComponent`/`AiName` так же
+ * продублированы, а не импортированы из `src/config/project-config.ts` — см.
+ * конвенцию "изоляция модулей" в `CLAUDE.md`. Значения синхронизированы с
+ * `PLUGIN_COMPONENTS`/`PLUGIN_FILE_AI_VALUES` контракта.
  */
 export const PLUGIN_COMPONENTS = [
   "mcp",
@@ -48,18 +50,40 @@ export interface PluginBundleFile {
   content: string;
 }
 
+/** Автор создания/последнего изменения (`authorRefSchema` контракта). */
+export interface AuthorRef {
+  username: string;
+}
+
+export type UserRole = "admin" | "developer" | "guest";
+
+/** Пользователь реестра (`userSchema` контракта) — ответ `GET /v1/auth/me`. */
+export interface RegistryUser {
+  id: string;
+  username: string;
+  role: UserRole;
+  disabled: boolean;
+  mustChangePassword: boolean;
+  lockedUntil: string | null;
+  lastLoginAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface PluginBundle {
   slug: string;
   description: string;
   version: string;
   changelog: string | null;
-  /** Slug'и зависимостей — без версии, зависимость резолвится всегда на "latest" (plan.md, раздел 0/4 п.9). */
+  createdBy: AuthorRef;
+  updatedBy: AuthorRef;
+  /** Slug'и зависимостей — без версии, зависимость резолвится всегда на "latest". */
   dependencies: string[];
   files: PluginBundleFile[];
 }
 
 /**
- * Один элемент листинга `GET /v1/plugins` (plan.md, раздел 3 п.2) — только
+ * Один элемент листинга `GET /v1/plugins` — только
  * метаданные, без файлов: для `list --all` не нужен полный bundle каждой
  * версии, только slug + latest semver, чтобы сравнить с локальным состоянием.
  */
@@ -67,6 +91,8 @@ export interface PluginListItem {
   slug: string;
   description: string;
   latestVersion: string;
+  createdBy: AuthorRef;
+  updatedBy: AuthorRef;
   updatedAt: string;
 }
 
@@ -87,4 +113,6 @@ export interface RegistryClient {
    * только `closet-cli list --all`.
    */
   listPlugins(): Promise<PluginListItem[]>;
+  /** Текущий пользователь токена (`GET /v1/auth/me`) — для `login`/`whoami`. */
+  getMe(): Promise<RegistryUser>;
 }

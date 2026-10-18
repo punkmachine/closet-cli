@@ -3,7 +3,7 @@ import pc from "picocolors";
 import semver from "semver";
 
 import { projectConfigExists, readProjectConfig } from "../config/project-config.js";
-import { HttpRegistryClient } from "../registry/http-client.js";
+import { createAuthorizedClient } from "./registry-access.js";
 
 interface ListCommandOptions {
   all?: boolean;
@@ -45,7 +45,11 @@ export function registerListCommand(program: Command): void {
       }
 
       if (opts.all) {
-        const registry = new HttpRegistryClient(config.registry.host, config.registry.token);
+        const registry = createAuthorizedClient(config);
+        if (!registry) {
+          process.exitCode = 1;
+          return;
+        }
 
         let items;
         try {

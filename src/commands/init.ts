@@ -4,6 +4,7 @@ import type { Command } from "commander";
 import pc from "picocolors";
 import * as p from "@clack/prompts";
 
+import { resolveToken, saveToken } from "../config/credentials.js";
 import { claudeDir, itemTypeDir, scriptsDir } from "../config/paths.js";
 import {
   AI_NAMES,
@@ -129,21 +130,36 @@ async function resolveRegistryConfig(
     host = answer;
   }
 
-  let token = opts.token;
-  if (token === undefined && !opts.yes && interactive) {
-    const answer = await p.text({
-      message: "Токен реестра (Authorization: Bearer)",
-      placeholder: "оставьте пустым, если не нужен",
-    });
+  return { host };
+}
 
-    if (p.isCancel(answer)) {
-      p.cancel("Инициализация отменена.");
-      process.exit(0);
-    }
-    token = answer.length > 0 ? answer : undefined;
+/**
+ * Резолвит токен для персонального файла (`credentials.json`, НЕ `closet-cli.json`):
+ * флаг `--token` или скрытый промпт. Пустой ответ / нет TTY — `undefined`
+ * (токен можно задать позже через `closet-cli login` или `CLOSET_CLI_TOKEN`).
+ */
+async function resolveInitToken(
+  opts: InitCommandOptions,
+  interactive: boolean,
+): Promise<string | undefined> {
+  if (opts.token !== undefined) {
+    return opts.token.length > 0 ? opts.token : undefined;
   }
 
-  return token === undefined ? { host } : { host, token };
+  if (opts.yes || !interactive) {
+    return undefined;
+  }
+
+  const answer = await p.password({
+    message: "Токен реестра (clt_…, сохраняется вне репозитория)",
+  });
+
+  if (p.isCancel(answer)) {
+    p.cancel("Инициализация отменена.");
+    process.exit(0);
+  }
+
+  return answer.length > 0 ? answer : undefined;
 }
 
 /**
@@ -170,15 +186,18 @@ async function resolveAiConfig(opts: InitCommandOptions, interactive: boolean): 
       p.cancel("Инициализация отменена.");
       process.exit(0);
     }
+
     selected = answer as AiName[];
   } else {
     fail("Не указаны ИИ-агенты, а интерактивный промпт недоступен (нет TTY). Используйте --ai codex,claude-code.");
   }
 
   const ai = {} as AiConfig;
+
   for (const name of AI_NAMES) {
     ai[name] = selected.includes(name);
   }
+
   return ai;
 }
 
@@ -208,6 +227,7 @@ async function resolveGenerateAgentsMd(
     p.cancel("Инициализация отменена.");
     process.exit(0);
   }
+
   return answer;
 }
 
@@ -232,7 +252,9 @@ function copyTemplateFileIfMissing(
   destPath: string,
 ): boolean {
   if (fs.existsSync(destPath)) return false;
+
   copyTemplateFile(templatesDir, templateName, destPath);
+
   return true;
 }
 
@@ -258,6 +280,7 @@ function ensureGitignoreEntry(projectRoot: string): void {
 
   const needsLeadingNewline = content.length > 0 && !content.endsWith("\n");
   const suffix = `${needsLeadingNewline ? "\n" : ""}${GITIGNORE_ENTRY}\n`;
+
   fs.appendFileSync(gitignorePath, suffix, "utf-8");
 }
 
@@ -299,6 +322,7 @@ function setupAgentsMdBundle(projectRoot: string, templatesDir: string, ai: AiCo
   if (copyTemplateFileIfMissing(templatesDir, "AGENTS.md", path.join(projectRoot, "AGENTS.md"))) {
     created.push("AGENTS.md");
   }
+
   if (
     ai["claude-code"] &&
     copyTemplateFileIfMissing(templatesDir, "CLAUDE.md", path.join(projectRoot, "CLAUDE.md"))
@@ -316,7 +340,7 @@ export function registerInitCommand(program: Command, templatesDir: string): voi
     .option("--force", "Переинициализировать поверх существующего .claude/.codex/closet-cli.json")
     .option("-y, --yes", "Неинтерактивный режим: без промптов, только флаги и значения по умолчанию")
     .option("--host <url>", "Адрес closet-registry")
-    .option("--token <token>", "Токен реестра (Authorization: Bearer)")
+    .option("--token <token>", "Персональный токен реестра (clt_…); сохраняется в ~/.closet-cli, а не в closet-cli.json")
     .option("--ai <list>", "Список ИИ через запятую, например codex,claude-code")
     .option("--agents-md", "Сгенерировать AGENTS.md и файлы-мосты без вопроса")
     .option("--no-agents-md", "Не генерировать AGENTS.md и файлы-мосты")
@@ -341,6 +365,7 @@ export function registerInitCommand(program: Command, templatesDir: string): voi
       }
 
       const registry = await resolveRegistryConfig(opts, interactive);
+      const token = await resolveInitToken(opts, interactive);
       const ai = await resolveAiConfig(opts, interactive);
       const generateAgentsMd = await resolveGenerateAgentsMd(opts, interactive);
 
@@ -358,6 +383,10 @@ export function registerInitCommand(program: Command, templatesDir: string): voi
         }
 
         writeProjectConfig(projectRoot, createInitialProjectConfig(registry, ai));
+
+        if (token !== undefined) {
+          saveToken(registry.host, token);
+        }
       } catch (error) {
         const details = error instanceof Error ? error.message : String(error);
         if (interactive && !opts.yes) {
@@ -376,6 +405,9 @@ export function registerInitCommand(program: Command, templatesDir: string): voi
         summary.push("Codex: .codex/{skills,scripts}/");
       }
       summary.push("closet-cli.json");
+      if (token !== undefined) {
+        summary.push("Токен сохранён в персональный файл (вне репозитория)");
+      }
 
       if (interactive && !opts.yes) {
         p.outro(pc.green("Проект инициализирован."));
@@ -385,6 +417,14 @@ export function registerInitCommand(program: Command, templatesDir: string): voi
 
       for (const line of summary) {
         console.log(pc.green(`  ${line}`));
+      }
+
+      if (token === undefined && !resolveToken(registry.host)) {
+        console.log(
+          pc.yellow(
+            "Токен не задан: до `closet-cli login` (или CLOSET_CLI_TOKEN) команды install/update/list --all работать не будут.",
+          ),
+        );
       }
     });
 }

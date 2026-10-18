@@ -5,9 +5,11 @@ import { fileURLToPath } from "node:url";
 import { Command } from "commander";
 import pc from "picocolors";
 
+import { RegistryAuthError } from "./registry/http-client.js";
 import { registerInitCommand } from "./commands/init.js";
 import { registerInstallCommand } from "./commands/install.js";
 import { registerListCommand } from "./commands/list.js";
+import { registerLoginCommand, registerLogoutCommand, registerWhoamiCommand } from "./commands/login.js";
 import { registerRemoveCommand } from "./commands/remove.js";
 import { registerUpdateCommand } from "./commands/update.js";
 
@@ -30,11 +32,12 @@ registerInstallCommand(program, pkg.version);
 registerUpdateCommand(program);
 registerRemoveCommand(program);
 registerListCommand(program);
+registerLoginCommand(program);
+registerLogoutCommand(program);
+registerWhoamiCommand(program);
 
 program.parseAsync(process.argv).catch((error: unknown) => {
   const details = error instanceof Error ? error.message : String(error);
-  console.error(pc.red(`Неожиданная ошибка: ${details}`));
-  // process.exitCode, не process.exit — см. комментарий в src/commands/install.ts
-  // про краш libuv на Windows/Node 24 после ≥2 вызовов fetch в процессе.
+  console.error(pc.red(error instanceof RegistryAuthError ? details : `Неожиданная ошибка: ${details}`));
   process.exitCode = 1;
 });

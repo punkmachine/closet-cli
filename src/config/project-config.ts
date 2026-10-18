@@ -66,14 +66,16 @@ export const installedPluginSchema = z.object({
 export type InstalledPlugin = z.infer<typeof installedPluginSchema>;
 
 /**
- * Схема секции `registry`: адрес self-hosted реестра и токен авторизации.
- * Токен опционален в схеме, но сервер сейчас требует Bearer-токен на всех
- * `/v1/*`, так что на практике поле обязательно для непустого реестра.
+ * Схема секции `registry`: адрес self-hosted реестра. Токен здесь НЕ хранится
+ * (файл коммитится) — он лежит в `credentials.json`, см. `config/credentials.ts`.
+ * `passthrough` оставляет устаревшее поле `token` из старых файлов нетронутым
+ * при перезаписи конфига: удалять его молча нельзя, это решение пользователя.
  */
-export const registryConfigSchema = z.object({
-  host: z.string().url(),
-  token: z.string().optional(),
-});
+export const registryConfigSchema = z
+  .object({
+    host: z.string().url(),
+  })
+  .passthrough();
 
 export type RegistryConfig = z.infer<typeof registryConfigSchema>;
 
@@ -141,6 +143,15 @@ export function readProjectConfig(projectRoot: string): ProjectConfig {
   }
 
   return result.data;
+}
+
+/**
+ * Устаревший токен из `registry.token` старого `closet-cli.json` (до персональных
+ * токенов). Только для обратной совместимости и предупреждения пользователю.
+ */
+export function readLegacyToken(config: ProjectConfig): string | undefined {
+  const token = (config.registry as Record<string, unknown>).token;
+  return typeof token === "string" && token.length > 0 ? token : undefined;
 }
 
 /**

@@ -5,7 +5,7 @@ import { projectConfigExists, readProjectConfig, writeProjectConfig } from "../c
 import { ConflictResolutionError, type ConflictMode } from "../core/conflict.js";
 import { DependencyResolutionError, resolvePluginClosure } from "../core/dependency-resolver.js";
 import { installBundles } from "../core/installer.js";
-import { HttpRegistryClient } from "../registry/http-client.js";
+import { createAuthorizedClient } from "./registry-access.js";
 
 interface InstallCommandOptions {
   force?: boolean;
@@ -50,7 +50,11 @@ export function registerInstallCommand(program: Command, cliVersion: string): vo
         return;
       }
 
-      const registry = new HttpRegistryClient(config.registry.host, config.registry.token);
+      const registry = createAuthorizedClient(config);
+      if (!registry) {
+        process.exitCode = 1;
+        return;
+      }
       const mode: ConflictMode = opts.force ? "force" : opts.skip ? "skip" : "interactive";
 
       // process.exitCode (не process.exit) начиная отсюда: после ≥2 вызовов
