@@ -5,8 +5,18 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { inspectCopy, projectFile, removeCopy, resolveCopyPath, sha256Hex } from "../src/core/projector.js";
 import { getHarness } from "../src/harnesses/registry.js";
+import type { HarnessDescriptor } from "../src/harnesses/types.js";
 
-const claude = getHarness("claude-code");
+// Реальные дескрипторы пока не используют `copy`; движок копирования проверяем на синтетическом.
+const base = getHarness("claude-code");
+const claude: HarnessDescriptor = {
+  ...base,
+  placements: {
+    ...base.placements,
+    skills: { kind: "copy", dir: ".claude/skills" },
+    rules: { kind: "copy", dir: ".claude/rules" },
+  },
+};
 const codex = getHarness("codex");
 
 let root: string;
@@ -33,12 +43,12 @@ describe("resolveCopyPath", () => {
   it("убирает dot-сегмент ai и сохраняет структуру skill-папки", () => {
     expect(resolveCopyPath(claude, ".agents/skills/lint/SKILL.md")).toBe(".claude/skills/lint/SKILL.md");
     expect(resolveCopyPath(claude, ".agents/skills/lint/refs/a.md")).toBe(".claude/skills/lint/refs/a.md");
-    expect(resolveCopyPath(claude, ".agents/agents/.claude-code/reviewer.md")).toBe(".claude/agents/reviewer.md");
-    expect(resolveCopyPath(codex, ".agents/agents/.codex/reviewer.toml")).toBe(".codex/agents/reviewer.toml");
+    expect(resolveCopyPath(claude, ".agents/rules/.claude-code/style.md")).toBe(".claude/rules/style.md");
+    expect(resolveCopyPath(codex, ".agents/agents/reviewer.toml")).toBeNull();
   });
 
   it("не проецирует файлы другого harness'а", () => {
-    expect(resolveCopyPath(claude, ".agents/agents/.codex/reviewer.toml")).toBeNull();
+    expect(resolveCopyPath(claude, ".agents/agents/reviewer.toml")).toBeNull();
     expect(resolveCopyPath(codex, ".agents/agents/.claude-code/reviewer.md")).toBeNull();
   });
 

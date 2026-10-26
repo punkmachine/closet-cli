@@ -14,15 +14,15 @@ export const codex = {
     skills: { kind: "native" },
     rules: { kind: "not-implemented" },
     commands: { kind: "unsupported" },
-    agents: { kind: "copy", dir: ".codex/agents" },
+    agents: { kind: "native" },
     hooks: { kind: "store-only" },
     scripts: { kind: "store-only" },
     mcp: { kind: "unsupported" },
   },
-  // `agents` — не merge-слот: по документации это файлы `.codex/agents/*.toml` (placements выше).
+  // `agents` — не merge-слот: это файлы `.toml` прямо в `.agents/agents/` (placements выше).
   mergePlacements: {
     hooks: { kind: "merge-toml", file: ".codex/config.toml" },
     mcp: { kind: "merge-toml", file: ".codex/config.toml" },
   },
-  initDirs: [".codex/agents"],
+  initDirs: [],
 } as const satisfies HarnessDescriptor;

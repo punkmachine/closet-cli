@@ -14,7 +14,16 @@ export type PluginComponent = "mcp" | "rules" | "hooks" | "agents" | "commands" 
 export type Placement =
   /** Копировать из `.agents/<component>` в `dir` (путь относительно корня проекта). */
   | { kind: "copy"; dir: string }
-  /** Harness сам читает `.agents/<component>`, копия не нужна. */
+  /**
+   * Писать файл сразу в `dir` (путь относительно корня проекта), минуя `.agents/`:
+   * ИИ не читает `.agents/`, а второй экземпляр в хранилище только дублировал бы файл.
+   * Источник правды — сам файл в `dir`; `sync` такие файлы не трогает.
+   */
+  | { kind: "direct"; dir: string }
+  /**
+   * Harness сам читает `.agents/<component>`, копия не нужна. Его собственные файлы
+   * лежат в хранилище без dot-подпапки ИИ: `.agents/<component>/<path>`.
+   */
   | { kind: "native" }
   /** Файл живёт только в `.agents/`; на него ссылаются по пути (скрипты, файлы хуков). */
   | { kind: "store-only" }

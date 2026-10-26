@@ -414,12 +414,12 @@ export function registerInitCommand(program: Command, templatesDir: string): voi
       const selectedAiNames = AI_NAMES.filter((name) => ai[name]);
       const summary = [`Включены ИИ: ${selectedAiNames.map((n) => getHarness(n).label).join(", ")}`];
       if (layout === "agents") {
-        summary.push("Хранилище: .agents/{skills,rules,commands,agents,hooks,scripts}/ (правьте файлы здесь, а не в копиях)");
+        summary.push("Хранилище: .agents/{skills,rules,commands,agents,hooks,scripts}/ (Codex читает его сам; hooks/scripts — только хранилище)");
         if (ai["claude-code"]) {
-          summary.push("Claude Code: копии в .claude/{skills,rules,commands,agents}/, .claude/settings*.json, .mcp.json");
+          summary.push("Claude Code: файлы сразу в .claude/{skills,rules,commands,agents}/, .claude/settings*.json, .mcp.json");
         }
         if (ai.codex) {
-          summary.push("Codex: .codex/agents/ (skills читаются из .agents/skills)");
+          summary.push("Codex: skills и agents читаются прямо из .agents/skills и .agents/agents");
         }
       } else {
         if (ai["claude-code"]) {

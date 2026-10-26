@@ -5,16 +5,16 @@ import { HARNESS_IDS, HARNESSES } from "../src/harnesses/registry.js";
 import { resolvePlacement } from "../src/core/path-mapper.js";
 
 describe("resolvePlacement", () => {
-  it("копирует skills/rules/commands/agents Claude Code в .claude", () => {
-    expect(resolvePlacement("claude-code", "skills", false)).toEqual({ kind: "copy", dir: ".claude/skills" });
-    expect(resolvePlacement("claude-code", "rules", false)).toEqual({ kind: "copy", dir: ".claude/rules" });
-    expect(resolvePlacement("claude-code", "commands", false)).toEqual({ kind: "copy", dir: ".claude/commands" });
-    expect(resolvePlacement("claude-code", "agents", false)).toEqual({ kind: "copy", dir: ".claude/agents" });
+  it("пишет skills/rules/commands/agents Claude Code сразу в .claude", () => {
+    expect(resolvePlacement("claude-code", "skills", false)).toEqual({ kind: "direct", dir: ".claude/skills" });
+    expect(resolvePlacement("claude-code", "rules", false)).toEqual({ kind: "direct", dir: ".claude/rules" });
+    expect(resolvePlacement("claude-code", "commands", false)).toEqual({ kind: "direct", dir: ".claude/commands" });
+    expect(resolvePlacement("claude-code", "agents", false)).toEqual({ kind: "direct", dir: ".claude/agents" });
   });
 
-  it("Codex читает skills из .agents/skills сам, agents копирует в .codex/agents", () => {
+  it("Codex читает skills и agents из .agents/ сам", () => {
     expect(resolvePlacement("codex", "skills", false)).toEqual({ kind: "native" });
-    expect(resolvePlacement("codex", "agents", false)).toEqual({ kind: "copy", dir: ".codex/agents" });
+    expect(resolvePlacement("codex", "agents", false)).toEqual({ kind: "native" });
   });
 
   it("scripts и сами файлы хуков живут только в хранилище", () => {

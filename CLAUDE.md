@@ -12,14 +12,15 @@
 - Типы в `registry/types.ts` продублированы с `@closet/contract` намеренно (CLI от пакета не зависит) — при изменении контракта сверять вручную.
 
 
-## Раскладка файлов: хранилище `.agents/` + копии
+## Раскладка файлов: каждый ИИ там, где сам читает
 
-- `.agents/` — единственное место, куда пишутся файлы плагинов (источник правды); в папки ИИ они **копируются**. Ссылки (symlink/junction/hardlink) не используются. Копии — производные: правки вносятся в `.agents/`, а не в `.claude/`/`.codex/`.
-- `src/harnesses/` — дескрипторы ИИ (`claude-code.ts`, `codex.ts`, список — `registry.ts`, типы — `types.ts`). Дескриптор описывает, куда ИИ получает каждый компонент (`copy`/`native`/`store-only`/`merge-*`/`unsupported`/`not-implemented`), какой у него файл инструкций и какие каталоги создавать в `init`. Новый ИИ = новый файл дескриптора + строка в `registry.ts`, без правок ядра. `AI_NAMES`/`AiName` производны от `HARNESSES`.
-- `src/core/layout.ts` — пути хранилища (`ai: null` → `.agents/<component>/<path>`, `ai: X` → `.agents/<component>/.<X>/<path>`). `src/core/projector.ts` / `src/core/sync.ts` — копирование хранилище → папки ИИ, проверка расхождений, удаление копий. `core/path-mapper.ts` — `resolvePlacement` поверх дескрипторов.
-- В `closet-cli.json` у каждого файла плагина хранится sha256 записи в хранилище и `copies[]` (путь + sha256 каждой копии): по ним отличаются «копию правили руками» (конфликт, `core/conflict.ts`) и «обновилось хранилище» (копия просто перезаписывается).
-- `closet-cli sync` — односторонняя повторная проекция `.agents/` → папки ИИ.
-- Codex: skills читает прямо из `.agents/skills`, копия не нужна; раскладка Codex опирается только на документацию и на практике не проверялась.
+- Дублей нет: файл пишется один раз туда, где его читает ИИ. Claude Code не читает `.agents/` — его skills/rules/commands/agents пишутся сразу в `.claude/*` (`direct`), правки вносятся там. Codex читает `.agents/` сам — его skills/agents лежат прямо в `.agents/skills`, `.agents/agents` (`native`). Ссылки (symlink/junction/hardlink) не используются.
+- `src/harnesses/` — дескрипторы ИИ (`claude-code.ts`, `codex.ts`, список — `registry.ts`, типы — `types.ts`). Дескриптор — «матчер» компонент → место: `direct` (писать сразу в папку ИИ, минуя `.agents/`), `native` (ИИ читает `.agents/<component>`), `copy` (запись в `.agents/` + копия в папку ИИ; сейчас ни один ИИ не использует, но движок `projector`/`sync` сохранён для будущих), `store-only`/`merge-*`/`unsupported`/`not-implemented`; плюс файл инструкций и каталоги для `init`. Новый ИИ = новый файл дескриптора + строка в `registry.ts`, без правок ядра. `AI_NAMES`/`AiName` производны от `HARNESSES`.
+- `src/core/layout.ts` — пути хранилища `.agents/`: `ai: null` → `.agents/<component>/<path>`; `ai: X` → `.agents/<component>/.<X>/<path>`, но если для X компонент `native`, то без подпапки (иначе ИИ его не увидит). `core/installer.ts` (`planAgentsBundleFiles`) строит план по дескрипторам; `core/path-mapper.ts` — `resolvePlacement`.
+- `src/core/projector.ts` / `src/core/sync.ts` — копирование хранилище → папки ИИ (только для `copy`-размещений), проверка расхождений, удаление копий.
+- В `closet-cli.json` у каждого файла плагина хранится путь и sha256; для `copy`-размещений ещё `copies[]` (путь + sha256 каждой копии): по ним отличаются «копию правили руками» (конфликт, `core/conflict.ts`) и «обновилось хранилище». У `direct`/`native` файлов копий нет — ручная правка определяется по sha256 самого файла.
+- `closet-cli sync` — односторонняя повторная проекция `.agents/` → папки ИИ для `copy`-размещений; сейчас фактически no-op.
+- Codex: раскладка опирается только на документацию и на практике не проверялась (чтение `.agents/agents` — допущение).
 - Файл с неизвестным `ai` в bundle не роняет установку (пропускается с предупреждением «обновите closet-cli»; `registry/http-client.ts`, `unsupportedFiles`).
 - Legacy-раскладка (`--layout legacy`, нет поля `layout` в `closet-cli.json`) пока сохранена для старых проектов; план — удалить отдельным шагом, `closet-cli migrate` делать не будем.
 - Файлы формата spec («универсальный элемент» из админки) CLI не видит: реестр разворачивает их в обычные файлы под каждый ИИ при выдаче bundle.

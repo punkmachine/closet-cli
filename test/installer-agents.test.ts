@@ -62,15 +62,18 @@ afterEach(() => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
+const SKILL = ".claude/skills/lint/SKILL.md";
+
 describe("planBundleFiles (layout agents)", () => {
-  it("пишет файл в хранилище один раз; ai-специфичные — в dot-подпапку", () => {
+  it("Claude — сразу в .claude/*, Codex — в .agents/* (native), без дублей и dot-подпапок", () => {
     const { files, notices } = planBundleFiles(root, AI, demo(), "agents");
     const rel = files.map((f) => path.relative(root, f.destPath).split(path.sep).join("/")).sort();
     expect(rel).toEqual([
-      ".agents/agents/.claude-code/reviewer.md",
-      ".agents/agents/.codex/reviewer.toml",
-      ".agents/commands/run.md",
+      ".agents/agents/reviewer.toml",
       ".agents/skills/lint/SKILL.md",
+      ".claude/agents/reviewer.md",
+      ".claude/commands/run.md",
+      ".claude/skills/lint/SKILL.md",
     ]);
     expect(notices).toEqual([
       { pluginSlug: "demo", component: "commands", ai: "codex", reason: "unsupported" },
@@ -80,112 +83,109 @@ describe("planBundleFiles (layout agents)", () => {
   it("не пишет ai-специфичный файл выключенного harness'а", () => {
     const { files } = planBundleFiles(root, { codex: true, "claude-code": false }, demo(), "agents");
     const rel = files.map((f) => path.relative(root, f.destPath).split(path.sep).join("/")).sort();
-    expect(rel).toEqual([".agents/agents/.codex/reviewer.toml", ".agents/skills/lint/SKILL.md"]);
+    expect(rel).toEqual([".agents/agents/reviewer.toml", ".agents/skills/lint/SKILL.md"]);
+  });
+
+  it("только Claude: хранилище .agents/ не создаётся", () => {
+    const { files } = planBundleFiles(root, { codex: false, "claude-code": true }, demo(), "agents");
+    const rel = files.map((f) => path.relative(root, f.destPath).split(path.sep).join("/"));
+    expect(rel.some((r) => r.startsWith(".agents/"))).toBe(false);
   });
 });
 
 describe("installBundles (layout agents)", () => {
-  it("кладёт файлы в хранилище и копии в папки harness'ов (кроме native)", async () => {
+  it("кладёт файлы Claude в .claude/, Codex — в .agents/, копий нет", async () => {
     const [result] = await installBundles(root, AI, [demo()], "force", { layout: "agents" });
 
+    expect(read(SKILL)).toBe("skill v1");
     expect(read(".agents/skills/lint/SKILL.md")).toBe("skill v1");
-    expect(read(".claude/skills/lint/SKILL.md")).toBe("skill v1");
-    expect(exists(".codex/skills")).toBe(false);
     expect(read(".claude/agents/reviewer.md")).toBe("claude agent");
-    expect(read(".codex/agents/reviewer.toml")).toBe("codex agent");
+    expect(read(".agents/agents/reviewer.toml")).toBe("codex agent");
     expect(read(".claude/commands/run.md")).toBe("command");
+    expect(exists(".agents/commands")).toBe(false);
+    expect(exists(".agents/agents/.claude-code")).toBe(false);
+    expect(exists(".claude/agents/reviewer.toml")).toBe(false);
+    expect(exists(".codex")).toBe(false);
 
-    const skill = result!.writtenFiles.find((f) => f.path === ".agents/skills/lint/SKILL.md");
-    expect(skill?.copies?.map((c) => c.path)).toEqual([".claude/skills/lint/SKILL.md"]);
+    expect(result!.writtenFiles.every((f) => f.copies === undefined)).toBe(true);
     expect(result!.skippedCopies).toEqual([]);
   });
 
-  it("не перезаписывает руками изменённую копию в режиме skip", async () => {
-    const [first] = await installBundles(root, AI, [demo()], "force", { layout: "agents" });
-    fs.writeFileSync(path.join(root, ".claude/skills/lint/SKILL.md"), "hand edit");
+  it("не перезаписывает руками изменённый файл в режиме skip", async () => {
+    await installBundles(root, AI, [demo()], "force", { layout: "agents" });
+    fs.writeFileSync(path.join(root, SKILL), "hand edit");
 
-    const plugins: Record<string, InstalledPlugin> = {
-      demo: { version: "1.0.0", autoupdate: true, files: first!.writtenFiles },
-    };
-    const [second] = await installBundles(root, AI, [demo()], "skip", {
-      layout: "agents",
-      recordedCopies: collectRecordedCopies(plugins),
-    });
+    const [second] = await installBundles(root, AI, [demo()], "skip", { layout: "agents" });
 
-    expect(read(".claude/skills/lint/SKILL.md")).toBe("hand edit");
-    expect(second!.skippedCopies).toEqual([".claude/skills/lint/SKILL.md"]);
+    expect(read(SKILL)).toBe("hand edit");
+    expect(second!.skippedFiles.map((f) => path.relative(root, f.destPath).split(path.sep).join("/"))).toEqual([SKILL]);
   });
 
-  it("обновляет чистую копию при новой версии хранилища", async () => {
+  it("обновляет нетронутые файлы при новой версии", async () => {
     const [first] = await installBundles(root, AI, [demo()], "force", { layout: "agents" });
-    const plugins: Record<string, InstalledPlugin> = {
-      demo: { version: "1.0.0", autoupdate: true, files: first!.writtenFiles },
-    };
 
     const next = demo();
     next.files[0]!.content = "skill v2";
     const preApprovedKeys = new Set(first!.writtenFiles.map((f) => path.join(root, f.path)));
-    await installBundles(root, AI, [next], "interactive", {
-      layout: "agents",
-      preApprovedKeys,
-      recordedCopies: collectRecordedCopies(plugins),
-    });
+    await installBundles(root, AI, [next], "interactive", { layout: "agents", preApprovedKeys });
 
     expect(read(".agents/skills/lint/SKILL.md")).toBe("skill v2");
-    expect(read(".claude/skills/lint/SKILL.md")).toBe("skill v2");
+    expect(read(SKILL)).toBe("skill v2");
   });
 });
 
 describe("findModifiedPaths", () => {
-  it("помечает изменённую копию, но не отсутствующую", async () => {
+  it("помечает изменённый или удалённый файл", async () => {
     const [result] = await installBundles(root, AI, [demo()], "force", { layout: "agents" });
-    const skill = result!.writtenFiles.find((f) => f.path === ".agents/skills/lint/SKILL.md")!;
+    const skill = result!.writtenFiles.find((f) => f.path === SKILL)!;
 
     expect(findModifiedPaths(root, skill)).toEqual([]);
 
-    fs.rmSync(path.join(root, ".claude/skills/lint/SKILL.md"));
-    expect(findModifiedPaths(root, skill)).toEqual([]);
+    fs.writeFileSync(path.join(root, SKILL), "hand edit");
+    expect(findModifiedPaths(root, skill)).toEqual([SKILL]);
 
-    fs.writeFileSync(path.join(root, ".claude/skills/lint/SKILL.md"), "hand edit");
-    expect(findModifiedPaths(root, skill)).toEqual([".claude/skills/lint/SKILL.md"]);
+    fs.rmSync(path.join(root, SKILL));
+    expect(findModifiedPaths(root, skill)).toEqual([SKILL]);
   });
 });
 
 describe("sync (projectRecords)", () => {
-  it("восстанавливает отсутствующие копии из хранилища", async () => {
+  it("не трогает файлы, записанные напрямую в папку ИИ", async () => {
     const [result] = await installBundles(root, AI, [demo()], "force", { layout: "agents" });
-    fs.rmSync(path.join(root, ".claude"), { recursive: true });
+    fs.writeFileSync(path.join(root, SKILL), "hand edit");
 
     const plugins: Record<string, InstalledPlugin> = {
       demo: { version: "1.0.0", autoupdate: true, files: result!.writtenFiles },
     };
-    await projectRecords(root, AI, result!.writtenFiles, "force", collectRecordedCopies(plugins));
+    const projection = await projectRecords(root, AI, result!.writtenFiles, "force", collectRecordedCopies(plugins));
 
-    expect(read(".claude/skills/lint/SKILL.md")).toBe("skill v1");
-    expect(read(".claude/agents/reviewer.md")).toBe("claude agent");
+    expect([...projection.copies.values()].every((copies) => copies.length === 0)).toBe(true);
+    expect(read(SKILL)).toBe("hand edit");
   });
 });
 
 describe("removeTrackedFile (layout agents)", () => {
-  it("удаляет копии и файл хранилища", async () => {
+  it("удаляет файл Claude и файл Codex", async () => {
     const [result] = await installBundles(root, AI, [demo()], "force", { layout: "agents" });
-    const skill = result!.writtenFiles.find((f) => f.path === ".agents/skills/lint/SKILL.md")!;
+    const claudeSkill = result!.writtenFiles.find((f) => f.path === SKILL)!;
+    const codexSkill = result!.writtenFiles.find((f) => f.path === ".agents/skills/lint/SKILL.md")!;
 
-    expect(removeTrackedFile(root, skill, new Set())).toBe("removed");
+    expect(removeTrackedFile(root, claudeSkill, new Set())).toBe("removed");
+    expect(removeTrackedFile(root, codexSkill, new Set())).toBe("removed");
+    expect(exists(SKILL)).toBe(false);
     expect(exists(".agents/skills/lint/SKILL.md")).toBe(false);
-    expect(exists(".claude/skills/lint/SKILL.md")).toBe(false);
   });
 
-  it("не трогает копии, пока хранилищем пользуется другой плагин", async () => {
+  it("не трогает файл, пока им пользуется другой плагин", async () => {
     const [result] = await installBundles(root, AI, [demo()], "force", { layout: "agents" });
     const other: Record<string, InstalledPlugin> = {
       other: { version: "1.0.0", autoupdate: true, files: result!.writtenFiles },
     };
-    const skill = result!.writtenFiles.find((f) => f.path === ".agents/skills/lint/SKILL.md")!;
+    const skill = result!.writtenFiles.find((f) => f.path === SKILL)!;
 
     const stillUsed = collectUsedDestPaths(root, other, new Set());
     expect(removeTrackedFile(root, skill, stillUsed)).toBe("kept-shared");
-    expect(exists(".claude/skills/lint/SKILL.md")).toBe(true);
+    expect(exists(SKILL)).toBe(true);
   });
 });
 

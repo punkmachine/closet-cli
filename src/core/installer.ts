@@ -4,7 +4,7 @@ import path from "node:path";
 
 import type { AiConfig, InstalledPluginFile, Layout } from "../config/project-config.js";
 import { HARNESSES } from "../harnesses/registry.js";
-import { STORAGE_DIR } from "./layout.js";
+import { STORAGE_DIR, storageAiSegments } from "./layout.js";
 import { inspectCopy } from "./projector.js";
 import { projectRecords } from "./sync.js";
 import { installJsonSlot, isJsonSlotUnchanged } from "./json-merge.js";
@@ -143,7 +143,8 @@ export function planBundleFiles(
  * `.agents/<component>/[.<ai>/]<path>` (копии в папки harness'ов делает
  * проектор после записи), merge-файлы — как в legacy, по дескриптору harness'а.
  * Файл попадает в хранилище, только если хотя бы один из целевых включённых
- * harness'ов умеет с ним что-то делать (copy/native/store-only).
+ * harness'ов умеет с ним что-то делать (copy/native/store-only). `direct` пишется
+ * сразу в папку harness'а, минуя хранилище.
  */
 function planAgentsBundleFiles(projectRoot: string, ai: AiConfig, bundle: PluginBundle): PlanResult {
   const enabled = HARNESSES.filter((harness) => ai[harness.id]);
@@ -181,6 +182,19 @@ function planAgentsBundleFiles(projectRoot: string, ai: AiConfig, bundle: Plugin
         continue;
       }
 
+      if (placement.kind === "direct") {
+        files.push({
+          kind: "dir",
+          pluginSlug: bundle.slug,
+          component: bundleFile.component,
+          ai: bundleFile.ai,
+          targetAi: harness.id,
+          destPath: resolveSafeJoin(path.join(projectRoot, placement.dir), bundleFile.relativePath),
+          content: decodeDirContent(bundleFile, projectRoot),
+        });
+        continue;
+      }
+
       usableByAnyTarget = true;
     }
 
@@ -190,7 +204,7 @@ function planAgentsBundleFiles(projectRoot: string, ai: AiConfig, bundle: Plugin
       projectRoot,
       STORAGE_DIR,
       bundleFile.component,
-      ...(bundleFile.ai === null ? [] : [`.${bundleFile.ai}`]),
+      ...storageAiSegments(bundleFile.component, bundleFile.ai),
     );
     files.push({
       kind: "dir",

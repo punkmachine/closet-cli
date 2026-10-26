@@ -11,8 +11,14 @@ describe("layout", () => {
   });
 
   it("ai-специфичный файл → в dot-подпапке harness'а", () => {
+    expect(storagePath({ component: "agents", ai: "claude-code", relativePath: "reviewer.md" })).toBe(
+      ".agents/agents/.claude-code/reviewer.md",
+    );
+  });
+
+  it("native-компонент ИИ (Codex agents) → без dot-подпапки, чтобы ИИ его увидел", () => {
     expect(storagePath({ component: "agents", ai: "codex", relativePath: "reviewer.toml" })).toBe(
-      ".agents/agents/.codex/reviewer.toml",
+      ".agents/agents/reviewer.toml",
     );
   });
 
