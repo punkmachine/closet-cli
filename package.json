@@ -38,6 +38,7 @@
     "build": "tsup",
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "prepublishOnly": "pnpm build",
     "release:patch": "pnpm version patch && git push --follow-tags && pnpm publish",
     "release:minor": "pnpm version minor && git push --follow-tags && pnpm publish",
@@ -55,7 +56,8 @@
     "@types/node": "^22.20.1",
     "@types/semver": "^7.5.8",
     "tsup": "^8.3.5",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "vitest": "^5.0.5"
   },
   "packageManager": "pnpm@11.17.0"
 }
