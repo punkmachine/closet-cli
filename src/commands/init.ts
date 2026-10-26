@@ -7,11 +7,15 @@ import * as p from "@clack/prompts";
 import { resolveToken, saveToken } from "../config/credentials.js";
 import { ensureGitignoreEntry } from "../config/gitignore.js";
 import { claudeDir, itemTypeDir, LOCAL_CONFIG_FILE_NAME, scriptsDir } from "../config/paths.js";
+import { STORAGE_DIR } from "../core/layout.js";
+import { getHarness } from "../harnesses/registry.js";
 import {
   AI_NAMES,
   type AiConfig,
   type AiName,
   createInitialProjectConfig,
+  type Layout,
+  LAYOUTS,
   projectConfigExists,
   type RegistryConfig,
   writeProjectConfig,
@@ -23,12 +27,15 @@ import {
  * Список продублирован здесь намеренно (а не импортирован из `src/registry/types.ts`),
  * чтобы команда `init` оставалась самодостаточной и не тянула лишнюю зависимость на registry.
  */
-const CLAUDE_ITEM_TYPE_DIRS = ["rules", "skills", "commands", "agents", "hooks"] as const;
+const LEGACY_CLAUDE_ITEM_TYPE_DIRS = ["rules", "skills", "commands", "agents", "hooks"] as const;
 
 const CODEX_DIR_NAME = ".codex";
 
+/** Компоненты, под которые `init` создаёт каталоги хранилища `.agents/` (PLAN.md, §3). */
+const STORAGE_COMPONENT_DIRS = ["skills", "rules", "commands", "agents", "hooks", "scripts"] as const;
+
 /**
- * Компоненты Codex, у которых есть выделенный каталог на диске (см. plan.md, 2.9).
+ * Legacy-раскладка. Компоненты Codex, у которых есть выделенный каталог на диске (см. plan.md, 2.9).
  * Остальные компоненты (`rules`/`agents`/`hooks`/`mcp`) — merge-записи в
  * `AGENTS.md`/`.codex/config.toml`, отдельного каталога не требуют.
  * `commands` у Codex не имеет аналога вовсе.
@@ -37,11 +44,6 @@ const CODEX_SUBDIRS_WITH_FOLDER = ["skills", "scripts"] as const;
 
 const GITIGNORE_ENTRY = ".claude/settings.local.json";
 
-const AI_LABELS: Record<AiName, string> = {
-  "claude-code": "Claude Code",
-  codex: "Codex",
-};
-
 interface InitCommandOptions {
   force?: boolean;
   yes?: boolean;
@@ -49,6 +51,7 @@ interface InitCommandOptions {
   token?: string;
   ai?: string;
   agentsMd?: boolean;
+  layout?: string;
 }
 
 function fail(message: string): never {
@@ -178,7 +181,7 @@ async function resolveAiConfig(opts: InitCommandOptions, interactive: boolean): 
   } else if (interactive) {
     const answer = await p.multiselect({
       message: "Какие ИИ-агенты включить в проекте?",
-      options: AI_NAMES.map((name) => ({ value: name, label: AI_LABELS[name] })),
+      options: AI_NAMES.map((name) => ({ value: name, label: getHarness(name).label })),
       initialValues: [...AI_NAMES],
       required: true,
     });
@@ -259,9 +262,30 @@ function copyTemplateFileIfMissing(
   return true;
 }
 
-function setupClaudeCode(projectRoot: string, templatesDir: string): void {
-  for (const type of CLAUDE_ITEM_TYPE_DIRS) {
-    fs.mkdirSync(itemTypeDir(projectRoot, type), { recursive: true });
+function parseLayoutFlag(value: string | undefined): Layout {
+  if (value === undefined) return "agents";
+  if (!(LAYOUTS as readonly string[]).includes(value)) {
+    fail(`Неизвестная раскладка "${value}" в --layout. Допустимые значения: ${LAYOUTS.join(", ")}.`);
+  }
+  return value as Layout;
+}
+
+/** Хранилище `.agents/` — единственное место, куда CLI пишет файлы плагинов. */
+function setupStorage(projectRoot: string): void {
+  for (const component of STORAGE_COMPONENT_DIRS) {
+    fs.mkdirSync(path.join(projectRoot, STORAGE_DIR, component), { recursive: true });
+  }
+}
+
+function setupClaudeCode(projectRoot: string, templatesDir: string, layout: Layout): void {
+  if (layout === "agents") {
+    for (const dir of getHarness("claude-code").initDirs) {
+      fs.mkdirSync(path.join(projectRoot, dir), { recursive: true });
+    }
+  } else {
+    for (const type of LEGACY_CLAUDE_ITEM_TYPE_DIRS) {
+      fs.mkdirSync(itemTypeDir(projectRoot, type), { recursive: true });
+    }
   }
 
   copyTemplateFile(templatesDir, "settings.json", path.join(claudeDir(projectRoot), "settings.json"));
@@ -271,16 +295,25 @@ function setupClaudeCode(projectRoot: string, templatesDir: string): void {
     path.join(claudeDir(projectRoot), "settings.local.json"),
   );
 
-  fs.mkdirSync(scriptsDir(projectRoot), { recursive: true });
+  if (layout === "legacy") {
+    fs.mkdirSync(scriptsDir(projectRoot), { recursive: true });
+  }
 
   copyTemplateFile(templatesDir, "mcp.json", path.join(projectRoot, ".mcp.json"));
 
   ensureGitignoreEntry(projectRoot, GITIGNORE_ENTRY);
 }
 
-function setupCodex(projectRoot: string): void {
+function setupCodex(projectRoot: string, layout: Layout): void {
   const codexRoot = path.join(projectRoot, CODEX_DIR_NAME);
   fs.mkdirSync(codexRoot, { recursive: true });
+  if (layout === "agents") {
+    // Skills Codex читает прямо из `.agents/skills`, копии не нужны.
+    for (const dir of getHarness("codex").initDirs) {
+      fs.mkdirSync(path.join(projectRoot, dir), { recursive: true });
+    }
+    return;
+  }
   for (const sub of CODEX_SUBDIRS_WITH_FOLDER) {
     fs.mkdirSync(path.join(codexRoot, sub), { recursive: true });
   }
@@ -317,11 +350,13 @@ export function registerInitCommand(program: Command, templatesDir: string): voi
     .option("--host <url>", "Адрес closet-registry")
     .option("--token <token>", "Персональный токен реестра (clt_…); сохраняется в ~/.closet-cli, а не в closet-cli.json")
     .option("--ai <list>", "Список ИИ через запятую, например codex,claude-code")
+    .option("--layout <layout>", "Раскладка файлов: agents (хранилище .agents/ + копии) или legacy", "agents")
     .option("--agents-md", "Сгенерировать AGENTS.md и файлы-мосты без вопроса")
     .option("--no-agents-md", "Не генерировать AGENTS.md и файлы-мосты")
     .action(async (opts: InitCommandOptions) => {
       const projectRoot = process.cwd();
       const interactive = isInteractive();
+      const layout = parseLayoutFlag(opts.layout);
 
       const alreadyInitialized =
         fs.existsSync(claudeDir(projectRoot)) ||
@@ -345,11 +380,14 @@ export function registerInitCommand(program: Command, templatesDir: string): voi
       const generateAgentsMd = await resolveGenerateAgentsMd(opts, interactive);
 
       try {
+        if (layout === "agents") {
+          setupStorage(projectRoot);
+        }
         if (ai["claude-code"]) {
-          setupClaudeCode(projectRoot, templatesDir);
+          setupClaudeCode(projectRoot, templatesDir, layout);
         }
         if (ai.codex) {
-          setupCodex(projectRoot);
+          setupCodex(projectRoot, layout);
         }
 
         let createdAgentsFiles: string[] = [];
@@ -357,7 +395,7 @@ export function registerInitCommand(program: Command, templatesDir: string): voi
           createdAgentsFiles = setupAgentsMdBundle(projectRoot, templatesDir, ai);
         }
 
-        writeProjectConfig(projectRoot, createInitialProjectConfig(registry, ai));
+        writeProjectConfig(projectRoot, createInitialProjectConfig(registry, ai, layout));
 
         // Последней строкой в .gitignore: файл появится позже (при `login`), но игнорироваться должен сразу.
         ensureGitignoreEntry(projectRoot, LOCAL_CONFIG_FILE_NAME);
@@ -374,12 +412,22 @@ export function registerInitCommand(program: Command, templatesDir: string): voi
       }
 
       const selectedAiNames = AI_NAMES.filter((name) => ai[name]);
-      const summary = [`Включены ИИ: ${selectedAiNames.map((n) => AI_LABELS[n]).join(", ")}`];
-      if (ai["claude-code"]) {
-        summary.push("Claude Code: .claude/{rules,skills,commands,agents,hooks,scripts}/, .claude/settings*.json, .mcp.json");
-      }
-      if (ai.codex) {
-        summary.push("Codex: .codex/{skills,scripts}/");
+      const summary = [`Включены ИИ: ${selectedAiNames.map((n) => getHarness(n).label).join(", ")}`];
+      if (layout === "agents") {
+        summary.push("Хранилище: .agents/{skills,rules,commands,agents,hooks,scripts}/ (правьте файлы здесь, а не в копиях)");
+        if (ai["claude-code"]) {
+          summary.push("Claude Code: копии в .claude/{skills,rules,commands,agents}/, .claude/settings*.json, .mcp.json");
+        }
+        if (ai.codex) {
+          summary.push("Codex: .codex/agents/ (skills читаются из .agents/skills)");
+        }
+      } else {
+        if (ai["claude-code"]) {
+          summary.push("Claude Code: .claude/{rules,skills,commands,agents,hooks,scripts}/, .claude/settings*.json, .mcp.json");
+        }
+        if (ai.codex) {
+          summary.push("Codex: .codex/{skills,scripts}/");
+        }
       }
       summary.push("closet-cli.json");
       if (token !== undefined) {
