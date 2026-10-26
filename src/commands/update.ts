@@ -6,9 +6,10 @@ import semver from "semver";
 import { projectConfigExists, readProjectConfig, writeProjectConfig } from "../config/project-config.js";
 import { ConflictResolutionError, type ConflictMode } from "../core/conflict.js";
 import { DependencyResolutionError, resolvePluginClosure } from "../core/dependency-resolver.js";
-import { installBundles, isPreviouslyTrackedFileUnchanged, trackedFileIdentityKey } from "../core/installer.js";
+import { findModifiedPaths, installBundles, trackedFileIdentityKey } from "../core/installer.js";
 import { collectUsedDestPaths, removeTrackedFile } from "../core/removal.js";
-import { createAuthorizedClient } from "./registry-access.js";
+import { collectRecordedCopies } from "../core/sync.js";
+import { createAuthorizedClient, warnUnsupportedBundleFiles } from "./registry-access.js";
 
 interface UpdateCommandOptions {
   all?: boolean;
@@ -131,9 +132,7 @@ export function registerUpdateCommand(program: Command): void {
         const previous = config.plugins[bundle.slug];
         if (!previous || opts.force) continue;
 
-        const modifiedPaths = previous.files
-          .filter((tracked) => !isPreviouslyTrackedFileUnchanged(projectRoot, tracked))
-          .map((tracked) => tracked.path);
+        const modifiedPaths = previous.files.flatMap((tracked) => findModifiedPaths(projectRoot, tracked));
 
         if (modifiedPaths.length > 0) {
           blockedReasons.set(bundle.slug, modifiedPaths);
@@ -157,9 +156,15 @@ export function registerUpdateCommand(program: Command): void {
         }
       }
 
+      warnUnsupportedBundleFiles(bundlesToInstall);
+
       let results;
       try {
-        results = await installBundles(projectRoot, config.ai, bundlesToInstall, mode, preApprovedKeys);
+        results = await installBundles(projectRoot, config.ai, bundlesToInstall, mode, {
+          layout: config.layout ?? "legacy",
+          preApprovedKeys,
+          recordedCopies: collectRecordedCopies(config.plugins),
+        });
       } catch (error) {
         if (error instanceof ConflictResolutionError) {
           console.error(pc.red(error.message));
@@ -211,8 +216,8 @@ export function registerUpdateCommand(program: Command): void {
 
       for (const result of results) {
         const previousVersion = previousVersions.get(result.bundle.slug);
-        const skippedSuffix =
-          result.skippedFiles.length > 0 ? `, ${result.skippedFiles.length} пропущено` : "";
+        const skippedCount = result.skippedFiles.length + result.skippedCopies.length;
+        const skippedSuffix = skippedCount > 0 ? `, ${skippedCount} пропущено` : "";
 
         if (previousVersion) {
           console.log(

@@ -12,8 +12,11 @@ export interface DirPlannedFile {
   component: PluginComponent;
   /** Исходный тег `ai` файла в bundle (`null` = общий для всех ИИ). */
   ai: AiName | null;
-  /** Конкретный ИИ, под который резолвился этот destPath (см. `core/installer.ts`, planBundleFiles). */
-  targetAi: AiName;
+  /**
+   * Конкретный ИИ, под который резолвился этот destPath (см. `core/installer.ts`, planBundleFiles).
+   * `null` — файл хранилища `.agents/` (раскладка `agents`): он общий, копии в папки harness'ов делает проектор.
+   */
+  targetAi: AiName | null;
   destPath: string;
   content: string | Buffer;
 }
@@ -142,4 +145,46 @@ export async function resolveConflicts(
   }
 
   return { toWrite, toSkip };
+}
+
+export interface PathConflictResolution {
+  overwrite: string[];
+  skip: string[];
+}
+
+/**
+ * То же разрешение конфликтов, но для копий файлов хранилища в папках
+ * harness'ов (раскладка `agents`, `core/sync.ts`): конфликт здесь — копия,
+ * которую правили руками и которая отличается от файла в `.agents/`.
+ * `paths` — пути копий относительно корня проекта (без дублей).
+ */
+export async function resolvePathConflicts(paths: string[], mode: ConflictMode): Promise<PathConflictResolution> {
+  if (paths.length === 0) return { overwrite: [], skip: [] };
+  if (mode === "force") return { overwrite: paths, skip: [] };
+  if (mode === "skip") return { overwrite: [], skip: paths };
+
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    const list = paths.map((f) => `  - ${f}`).join("\n");
+    throw new ConflictResolutionError(
+      `Копии файлов изменены вручную, но окружение не интерактивно (нет TTY):\n${list}\n` +
+        `Правки вносите в .agents/. Используйте флаг --force для перезаписи копий или --skip для пропуска.`,
+    );
+  }
+
+  p.intro("Копии изменены вручную");
+  p.log.warn(
+    `Следующие копии отличаются от файлов в .agents/ (правки нужно вносить в .agents/):\n${paths
+      .map((f) => `  - ${f}`)
+      .join("\n")}`,
+  );
+
+  const result: PathConflictResolution = { overwrite: [], skip: [] };
+  for (const file of paths) {
+    const answer = await p.confirm({ message: `Перезаписать копию ${file} из .agents/?` });
+    if (p.isCancel(answer)) {
+      throw new ConflictResolutionError("Операция отменена пользователем.");
+    }
+    (answer ? result.overwrite : result.skip).push(file);
+  }
+  return result;
 }

@@ -5,7 +5,8 @@ import { projectConfigExists, readProjectConfig, writeProjectConfig } from "../c
 import { ConflictResolutionError, type ConflictMode } from "../core/conflict.js";
 import { DependencyResolutionError, resolvePluginClosure } from "../core/dependency-resolver.js";
 import { installBundles } from "../core/installer.js";
-import { createAuthorizedClient } from "./registry-access.js";
+import { collectRecordedCopies } from "../core/sync.js";
+import { createAuthorizedClient, warnUnsupportedBundleFiles } from "./registry-access.js";
 
 interface InstallCommandOptions {
   force?: boolean;
@@ -75,9 +76,14 @@ export function registerInstallCommand(program: Command, cliVersion: string): vo
         throw error;
       }
 
+      warnUnsupportedBundleFiles(bundles);
+
       let results;
       try {
-        results = await installBundles(projectRoot, config.ai, bundles, mode);
+        results = await installBundles(projectRoot, config.ai, bundles, mode, {
+          layout: config.layout ?? "legacy",
+          recordedCopies: collectRecordedCopies(config.plugins),
+        });
       } catch (error) {
         if (error instanceof ConflictResolutionError) {
           console.error(pc.red(error.message));
@@ -123,6 +129,14 @@ export function registerInstallCommand(program: Command, cliVersion: string): vo
           console.log(
             pc.yellow(
               `⚠ ${label} — пропущено файлов (конфликт, оставлены существующие): ${result.skippedFiles.length}`,
+            ),
+          );
+        }
+
+        if (result.skippedCopies.length > 0) {
+          console.log(
+            pc.yellow(
+              `⚠ ${label} — копии изменены вручную и не перезаписаны (правки вносите в .agents/): ${result.skippedCopies.join(", ")}`,
             ),
           );
         }

@@ -3,6 +3,7 @@ import path from "node:path";
 
 import type { InstalledPlugin, InstalledPluginFile } from "../config/project-config.js";
 import { removeJsonSlot } from "./json-merge.js";
+import { removeCopy } from "./projector.js";
 import { removeTomlSlot } from "./toml-merge.js";
 
 function mergeFormatForPath(destPath: string): "json" | "toml" {
@@ -62,6 +63,13 @@ export function removeTrackedFile(
   }
 
   if (stillUsedDestPaths.has(destPath)) return "kept-shared";
+
+  // Раскладка `agents`: сначала копии в папках harness'ов, потом файл хранилища.
+  // Правки руками в копиях не сохраняем — как и для legacy-файлов, `remove` удаляет всё.
+  for (const copy of tracked.copies ?? []) {
+    removeCopy(projectRoot, copy, { force: true });
+  }
+
   if (!fs.existsSync(destPath)) return "already-gone";
 
   removeFileAndCleanupDir(destPath);
