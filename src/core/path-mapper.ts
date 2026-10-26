@@ -5,14 +5,16 @@
  * компонент `hooks` может нести и обычный файл (сам скрипт хука), и
  * merge-запись (регистрация хука в `settings.json`/`config.toml`).
  *
- * Типы `PluginComponent`/`AiName` продублированы здесь намеренно, а не
- * импортированы из `src/config/project-config.ts` — см. конвенцию
- * "изоляция модулей" в `CLAUDE.md`: этот модуль не должен тянуть зависимость
- * на `config/*` только ради пары union-типов.
+ * Типы `PluginComponent`/`AiName` берутся из `src/harnesses/*`, а не из
+ * `src/config/project-config.ts` — см. конвенцию "изоляция модулей" в
+ * `CLAUDE.md`: этот модуль не должен тянуть зависимость на `config/*`.
  */
 
-export type PluginComponent = "mcp" | "rules" | "hooks" | "agents" | "commands" | "skills" | "scripts";
-export type AiName = "codex" | "claude-code";
+import { getHarness, type HarnessId } from "../harnesses/registry.js";
+import type { Placement, PluginComponent } from "../harnesses/types.js";
+
+export type { PluginComponent };
+export type AiName = HarnessId;
 
 /**
  * Обычный (немерджащийся) файл: кладётся как есть в `relativeDir` внутри
@@ -90,7 +92,17 @@ const CODEX_MERGE_TARGETS: Partial<Record<PluginComponent, string>> = {
 };
 
 /**
- * Резолвит место на диске для файла плагина по компоненту, ИИ и флагу
+ * Раскладка `agents` (PLAN.md): место файла определяется дескриптором harness'а,
+ * а не таблицами выше (они остаются только для legacy-раскладки).
+ */
+export function resolvePlacement(ai: AiName, component: PluginComponent, merge: boolean): Placement {
+  const harness = getHarness(ai);
+  const placement = merge ? harness.mergePlacements[component] : harness.placements[component];
+  return placement ?? { kind: "unsupported" };
+}
+
+/**
+ * Legacy-раскладка (проекты без `layout: "agents"`): резолвит место на диске для файла плагина по компоненту, ИИ и флагу
  * `merge` (берётся из метаданных файла в bundle-ответе реестра, plan.md,
  * раздел 0). Путь в результате — относительно корня проекта пользователя.
  *

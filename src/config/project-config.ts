@@ -3,6 +3,7 @@ import path from "node:path";
 import { z } from "zod";
 import semver from "semver";
 
+import { HARNESS_IDS } from "../harnesses/registry.js";
 import { PROJECT_CONFIG_FILE_NAME } from "./paths.js";
 
 /**
@@ -26,11 +27,23 @@ export const PLUGIN_COMPONENTS = [
 export type PluginComponent = (typeof PLUGIN_COMPONENTS)[number];
 
 /**
- * Поддерживаемые ИИ-агенты. Список хардкодится в коде CLI, а не тянется с сервера.
+ * Поддерживаемые ИИ-агенты. Производный от дескрипторов `src/harnesses/*`
+ * (в коде CLI, а не с сервера).
  */
-export const AI_NAMES = ["codex", "claude-code"] as const;
+export const AI_NAMES = HARNESS_IDS;
 
 export type AiName = (typeof AI_NAMES)[number];
+
+/**
+ * Копия файла хранилища в папке harness'а (раскладка `agents`): путь копии и
+ * sha256 на момент записи — по нему отличаем ручную правку от обновления.
+ */
+export const fileCopySchema = z.object({
+  path: z.string(),
+  sha256: z.string(),
+});
+
+export type FileCopy = z.infer<typeof fileCopySchema>;
 
 /**
  * Схема одного файла в составе установленного плагина.
@@ -48,6 +61,8 @@ export const installedPluginFileSchema = z.object({
   merge: z.boolean().optional(),
   mergeKeyPath: z.string().optional(),
   mergeValue: z.unknown().optional(),
+  /** Только раскладка `agents`: копии этого файла в папках harness'ов. */
+  copies: z.array(fileCopySchema).optional(),
 });
 
 export type InstalledPluginFile = z.infer<typeof installedPluginFileSchema>;
@@ -90,7 +105,13 @@ export type AiConfig = z.infer<typeof aiConfigSchema>;
 /**
  * Схема всего файла `closet-cli.json`.
  */
+export const LAYOUTS = ["agents", "legacy"] as const;
+
+export type Layout = (typeof LAYOUTS)[number];
+
 export const projectConfigSchema = z.object({
+  /** `agents` — хранилище `.agents/` + копии; поля нет — legacy (файлы сразу в `.claude/`, `.codex/`). */
+  layout: z.literal("agents").optional(),
   registry: registryConfigSchema,
   ai: aiConfigSchema,
   plugins: z.record(z.string(), installedPluginSchema),
@@ -166,8 +187,13 @@ export function writeProjectConfig(projectRoot: string, config: ProjectConfig): 
  * Создаёт начальный конфиг для команды `init`: без установленных плагинов,
  * с указанным адресом реестра и набором включённых ИИ.
  */
-export function createInitialProjectConfig(registry: RegistryConfig, ai: AiConfig): ProjectConfig {
+export function createInitialProjectConfig(
+  registry: RegistryConfig,
+  ai: AiConfig,
+  layout: Layout = "agents",
+): ProjectConfig {
   return {
+    ...(layout === "agents" ? { layout } : {}),
     registry,
     ai,
     plugins: {},
