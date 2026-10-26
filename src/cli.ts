@@ -11,6 +11,7 @@ import { registerInstallCommand } from "./commands/install.js";
 import { registerListCommand } from "./commands/list.js";
 import { registerLoginCommand, registerLogoutCommand, registerWhoamiCommand } from "./commands/login.js";
 import { registerRemoveCommand } from "./commands/remove.js";
+import { registerSyncCommand } from "./commands/sync.js";
 import { registerUpdateCommand } from "./commands/update.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -31,6 +32,7 @@ registerInitCommand(program, templatesDir);
 registerInstallCommand(program, pkg.version);
 registerUpdateCommand(program);
 registerRemoveCommand(program);
+registerSyncCommand(program);
 registerListCommand(program);
 registerLoginCommand(program);
 registerLogoutCommand(program);
