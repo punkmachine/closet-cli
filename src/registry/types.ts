@@ -1,3 +1,5 @@
+import { HARNESS_IDS } from "../harnesses/registry.js";
+
 /**
  * Контракт HTTP-реестра closet-registry: единый bundle-эндпоинт
  * `GET /v1/plugins/:slug/:version`, `:version` может быть `"latest"`. Один
@@ -23,7 +25,8 @@ export const PLUGIN_COMPONENTS = [
 
 export type PluginComponent = (typeof PLUGIN_COMPONENTS)[number];
 
-export const AI_NAMES = ["codex", "claude-code"] as const;
+/** Производный от дескрипторов harness'ов CLI; значения `ai` вне этого списка пропускаются (`sanitizeBundle`). */
+export const AI_NAMES = HARNESS_IDS;
 
 export type AiName = (typeof AI_NAMES)[number];
 
@@ -80,6 +83,17 @@ export interface PluginBundle {
   /** Slug'и зависимостей — без версии, зависимость резолвится всегда на "latest". */
   dependencies: string[];
   files: PluginBundleFile[];
+  /**
+   * Файлы, которые CLI не смог принять (неизвестное значение `ai` или компонент —
+   * реестр новее CLI). Заполняется `sanitizeBundle`, на сервере такого поля нет.
+   */
+  unsupportedFiles?: UnsupportedBundleFile[];
+}
+
+export interface UnsupportedBundleFile {
+  component: string;
+  ai: string | null;
+  relativePath: string;
 }
 
 /**

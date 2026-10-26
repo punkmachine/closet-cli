@@ -1,4 +1,12 @@
-import type { PluginBundle, PluginListItem, RegistryClient, RegistryUser } from "./types.js";
+import {
+  AI_NAMES,
+  PLUGIN_COMPONENTS,
+  type PluginBundle,
+  type PluginBundleFile,
+  type PluginListItem,
+  type RegistryClient,
+  type RegistryUser,
+} from "./types.js";
 
 interface ErrorResponseBody {
   error?: string;
@@ -40,6 +48,28 @@ function describeAuthError(status: 401 | 403, code: string | undefined, retryAft
 }
 
 /**
+ * Отбрасывает файлы с неизвестным `ai`/компонентом (реестр может быть новее CLI,
+ * см. PLAN.md, Фаза 2): такой файл не должен ронять установку всего плагина —
+ * он попадает в `unsupportedFiles`, а команды печатают «обновите closet-cli».
+ */
+export function sanitizeBundle(raw: PluginBundle): PluginBundle {
+  const files: PluginBundleFile[] = [];
+  const unsupportedFiles: NonNullable<PluginBundle["unsupportedFiles"]> = [];
+
+  for (const file of raw.files) {
+    const knownAi = file.ai === null || (AI_NAMES as readonly string[]).includes(file.ai);
+    const knownComponent = (PLUGIN_COMPONENTS as readonly string[]).includes(file.component);
+    if (knownAi && knownComponent) {
+      files.push(file);
+    } else {
+      unsupportedFiles.push({ component: file.component, ai: file.ai, relativePath: file.relativePath });
+    }
+  }
+
+  return { ...raw, files, unsupportedFiles };
+}
+
+/**
  * `HttpRegistryClient` под контракт closet-registry (`@closet/contract`):
  * bundle-эндпоинт чтения + `Authorization: Bearer <clt_…>` на КАЖДЫЙ запрос
  * под `/v1/*` — сервер требует токен и на чтение (публичен только `/health`).
@@ -57,7 +87,7 @@ export class HttpRegistryClient implements RegistryClient {
     if (response.status === 404) {
       return undefined;
     }
-    return (await response.json()) as PluginBundle;
+    return sanitizeBundle((await response.json()) as PluginBundle);
   }
 
   async recordInstall(slug: string, version: string, cliVersion: string): Promise<void> {
